@@ -1,0 +1,2 @@
+// Bu dosya birden fazla ekranın tek yerde tutulması için — her birini ayrı dosyaya kopyala
+// Bu sadece referans — gerçek dosyalar aşağıdaki create_file çağrılarında oluşturulacak
