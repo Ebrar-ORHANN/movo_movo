@@ -49,6 +49,9 @@ export default function RootLayout() {
             <Stack.Screen name="live/index"            options={{ presentation: 'modal' }} />
             <Stack.Screen name="live/[id]"             />
             <Stack.Screen name="admin/index"           options={{ presentation: 'modal' }} />
+            <Stack.Screen name="post/create" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="post/[id]" />
+            <Stack.Screen name="settings" options={{ presentation: 'card', animation: 'slide_from_right' }} />
           </Stack>
         </AuthProvider>
       </SafeAreaProvider>

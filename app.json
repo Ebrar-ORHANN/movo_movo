@@ -27,6 +27,7 @@
     },
     "plugins": [
       "expo-router",
+      ["expo-location", { "locationAlwaysAndWhenInUsePermission": "Konum erişimi gerekli." }],
       [
         "expo-splash-screen",
         {
