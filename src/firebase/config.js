@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app'
+import { getStorage } from 'firebase/storage';
 import {
   initializeAuth,
   getReactNativePersistence
@@ -14,10 +15,12 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 }
 
-const app = initializeApp(firebaseConfig)
+const app = initializeApp(firebaseConfig)  // ✅ önce bu
 
 export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage),
 })
+
+export const storage = getStorage(app)  // ✅ sonra bu
 
 export default app

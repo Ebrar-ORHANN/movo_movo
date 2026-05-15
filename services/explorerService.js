@@ -36,7 +36,7 @@ export const submitPOI       = (data)                  => api.post('/pois', data
 // ── Aktif Gezginler — active_explorers tablosu (TTL: expires_at=+5dk) ────────
 // Kaşif haritasında "X gezgin yakında" göstergesi için
 export const updateExplorerStatus = (lat, lng, isOpen, cityId) =>
-  api.patch('/together/explorer-status', { lat, lng, is_open: isOpen, city_id: cityId });
+  api.put(`/together/explorer-status?lat=${lat}&lng=${lng}&is_open=${isOpen}${cityId?`&city_id=${cityId}`:''}`);
 export const removeExplorerStatus = () => api.delete('/together/explorer-status');
 export const getNearbyExplorers   = (lat, lng, radius=100) =>
   api.get(`/together/nearby-explorers?lat=${lat}&lng=${lng}&radius=${radius}`);

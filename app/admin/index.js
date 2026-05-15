@@ -8,8 +8,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { getMyPermissions, listPendingPOIs, approvePOI, rejectPOI, listReports, resolveReport } from '../../services/notificationService';
-
+//import { getMyPermissions, listPendingPOIs, approvePOI, rejectPOI, listReports, resolveReport } from '../../services/notificationService';
+import { getMyPermissions, listPendingPOIs, approvePOI, rejectPOI, listReports, resolveReport } from '../../services/adminService';
 export default function AdminScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();

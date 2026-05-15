@@ -1,8 +1,3 @@
-// ── services/api.js ─────────────────────────────────────────────────────────
-// Tüm backend isteklerinin geçtiği merkezi istemci.
-// Her istekte Firebase token otomatik eklenir.
-// DB ile ilişki: Her endpoint doğrudan movo_final.sql'deki tablolara karşılık gelir.
-
 import { auth } from '../src/firebase/config';
 import { API_BASE } from '../constants/api';
 
@@ -22,12 +17,17 @@ async function request(method, path, body = null, isForm = false) {
   if (body && isForm) { delete headers['Content-Type']; opts.body = body; }
 
   const res = await fetch(`${API_BASE}${path}`, opts);
+
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try { const err = await res.json(); msg = err.detail || msg; } catch {}
+    try {
+      const err = await res.json();
+      msg = err.detail || JSON.stringify(err);
+    } catch {}
+    console.error(`API Error ${res.status} on ${path}:`, msg);  // ← hangi endpoint olduğunu göster
     throw new Error(msg);
   }
-  // 204 No Content
+
   if (res.status === 204) return null;
   return res.json();
 }
@@ -35,9 +35,9 @@ async function request(method, path, body = null, isForm = false) {
 export const api = {
   get:    (path)          => request('GET',    path),
   post:   (path, body)    => request('POST',   path, body),
+  put:    (path, body)    => request('PUT',    path, body),   // ← EKLE
   patch:  (path, body)    => request('PATCH',  path, body),
   delete: (path)          => request('DELETE', path),
-  // Firebase token ile POST (kayıt/giriş için)
   postWithToken: async (path, firebaseToken, body = {}) => {
     const headers = {
       'Content-Type': 'application/json',
@@ -48,10 +48,11 @@ export const api = {
       headers,
       body: JSON.stringify(body),
     });
+
     if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try { const err = await res.json(); msg = err.detail || msg; } catch {}
-      throw new Error(msg);
+      const errText = await res.text();
+      console.error(`API Error ${res.status} on ${path}:`, errText);
+      throw new Error(errText);
     }
     return res.json();
   },

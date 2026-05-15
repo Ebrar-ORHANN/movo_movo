@@ -8,8 +8,8 @@ import { WS_BASE } from '../constants/api';
 import { auth } from '../src/firebase/config';
 
 // Active explorers — TTL: expires_at=NOW()+5dk (cleanup_expired_explorers cron)
-export const updateExplorerStatus = (lat,lng,isOpen,cityId) =>
-  api.patch('/together/explorer-status', { lat, lng, is_open: isOpen, city_id: cityId });
+export const updateExplorerStatus = (lat, lng, isOpen, cityId) =>
+  api.put(`/together/explorer-status?lat=${lat}&lng=${lng}&is_open=${isOpen}${cityId?`&city_id=${cityId}`:''}`);
 export const removeExplorerStatus = () => api.delete('/together/explorer-status');
 export const getNearbyExplorers   = (lat,lng,r=100) =>
   api.get(`/together/nearby-explorers?lat=${lat}&lng=${lng}&radius=${r}`);

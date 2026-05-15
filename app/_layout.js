@@ -1,7 +1,4 @@
 // ── app/_layout.js ──────────────────────────────────────────────────────────
-// Uygulama kökü: Firebase auth durumuna göre (auth) ya da (tabs) gösterilir.
-// AuthContext: Firebase oturumu + backend profil + admin yetkisi
-
 import { Stack } from 'expo-router';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -10,16 +7,18 @@ import { AuthProvider, useAuth } from '../context/AuthContext';
 import { useRouter, useSegments } from 'expo-router';
 
 function NavigationGuard() {
-  const { firebaseUser, loading } = useAuth();
+  const { firebaseUser, profile, loading } = useAuth();
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
     if (loading) return;
     const inAuth = segments[0] === '(auth)';
-    if (!firebaseUser && !inAuth) router.replace('/(auth)/onboarding');
-    if (firebaseUser && inAuth)  router.replace('/(tabs)/feed');
-  }, [firebaseUser, loading, segments]);
+    const isAuthed = firebaseUser && profile; // ← ikisi de gerekli
+
+    if (!isAuthed && !inAuth) router.replace('/(auth)/onboarding');
+    if (isAuthed && inAuth)   router.replace('/(tabs)/feed');
+  }, [firebaseUser, profile, loading, segments]);
 
   return null;
 }
@@ -33,6 +32,11 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
+
+            {/* Profil */}
+            <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+
+            {/* Modaller */}
             <Stack.Screen name="notifications"         options={{ presentation: 'modal' }} />
             <Stack.Screen name="messages/index"        options={{ presentation: 'modal' }} />
             <Stack.Screen name="messages/[room_id]"    />

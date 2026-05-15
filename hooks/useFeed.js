@@ -1,49 +1,98 @@
 // ── hooks/useFeed.js ─────────────────────────────────────────────────────────
-// posts, likes, saves, events — gerçek API bağlantısı
-import { useState, useEffect, useCallback } from 'react';
-import { fetchFeed, likeContent, unlikeContent, saveContent, unsaveContent } from '../services/feedService';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { likeContent, unlikeContent, saveContent, unsaveContent } from '../services/feedService';
 import { getNearbyEvents } from '../services/eventService';
+import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+
+async function safeFetchFeed(cursor) {
+  try {
+    const path = `/social/feed${cursor ? `?before=${cursor}` : ''}`;
+    const result = await api.get(path);
+    return Array.isArray(result) ? result : [];
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('404') || msg.includes('HTTP 404')) {
+      return null;
+    }
+    throw err;
+  }
+}
 
 export default function useFeed() {
-  const [posts, setPosts]       = useState([]);
-  const [events, setEvents]     = useState([]);
-  const [loading, setLoading]   = useState(true);
+  const authCtx = useAuth();
+  const firebaseUser = authCtx?.firebaseUser;
+  const authLoading  = authCtx?.loading;
+
+  const [posts, setPosts]           = useState([]);
+  const [events, setEvents]         = useState([]);
+  const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [before, setBefore]     = useState(null);
-  const [hasMore, setHasMore]   = useState(true);
+  const [before, setBefore]         = useState(null);
+  const [hasMore, setHasMore]       = useState(false);
+
+  const feedDisabled = useRef(false);
 
   const loadFeed = useCallback(async (cursor = null, isRefresh = false) => {
+    if (feedDisabled.current && !isRefresh) return;
+
     try {
       if (!cursor) isRefresh ? setRefreshing(true) : setLoading(true);
-      const [feedPosts, nearbyEvents] = await Promise.all([
-        fetchFeed(cursor),
-        cursor ? Promise.resolve([]) : getNearbyEvents(39.9, 32.8),
+
+      const [feedResult, nearbyEvents] = await Promise.all([
+        safeFetchFeed(cursor),
+        cursor ? Promise.resolve([]) : getNearbyEvents(39.9, 32.8).catch(() => []),
       ]);
+
+      if (feedResult === null) {
+        feedDisabled.current = true;
+        setHasMore(false);
+        if (!cursor && nearbyEvents.length) setEvents(nearbyEvents);
+        return;
+      }
+
       if (!cursor) {
-        setPosts(feedPosts);
+        setPosts(feedResult);
         if (nearbyEvents.length) setEvents(nearbyEvents);
       } else {
-        setPosts(prev => [...prev, ...feedPosts]);
+        setPosts(prev => [...prev, ...feedResult]);
       }
-      const last = feedPosts[feedPosts.length - 1];
+
+      const last = feedResult[feedResult.length - 1];
       setBefore(last?.created_at || null);
-      setHasMore(feedPosts.length >= 20);
-    } catch (e) { console.warn('Feed:', e.message); }
-    finally { setLoading(false); setRefreshing(false); }
+      setHasMore(feedResult.length >= 20);
+    } catch (e) {
+      console.warn('Feed yüklenemedi:', e.message);
+      setHasMore(false);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  useEffect(() => { loadFeed(); }, [loadFeed]);
+  useEffect(() => {
+    if (!authLoading && firebaseUser) loadFeed();
+  }, [loadFeed, authLoading, firebaseUser]);
 
-  const refresh  = () => { setBefore(null); loadFeed(null, true); };
-  const loadMore = () => { if (hasMore && !loading) loadFeed(before); };
+  const refresh = () => {
+    feedDisabled.current = false;
+    setBefore(null);
+    loadFeed(null, true);
+  };
+
+  const loadMore = () => {
+    if (hasMore && !loading && !refreshing) loadFeed(before);
+  };
 
   const toggleLike = useCallback((postId, liked) => {
-    setPosts(p => p.map(x => x.id===postId ? {...x, is_liked:!liked, like_cnt:x.like_cnt+(liked?-1:1)} : x));
+    setPosts(p => p.map(x => x.id === postId
+      ? { ...x, is_liked: !liked, like_cnt: x.like_cnt + (liked ? -1 : 1) }
+      : x));
     liked ? unlikeContent('post', postId) : likeContent('post', postId);
   }, []);
 
   const toggleSave = useCallback((postId, saved) => {
-    setPosts(p => p.map(x => x.id===postId ? {...x, is_saved:!saved} : x));
+    setPosts(p => p.map(x => x.id === postId ? { ...x, is_saved: !saved } : x));
     saved ? unsaveContent('post', postId) : saveContent('post', postId);
   }, []);
 

@@ -1,5 +1,4 @@
 // ── hooks/useProfile.js ──────────────────────────────────────────────────────
-// DB: users, follows, routes, events, saves, admin_roles
 import { useState, useEffect, useCallback } from 'react';
 import { fetchMyProfile, fetchUserStats, getMyAdminPermissions } from '../services/userService';
 import { getUserRoutes } from '../services/routeService';
@@ -7,46 +6,62 @@ import { getUserEvents } from '../services/eventService';
 import { getSavedContent } from '../services/feedService';
 import { signOut } from 'firebase/auth';
 import { auth } from '../src/firebase/config';
+import { useAuth } from '../context/AuthContext';
+
+async function safeGet(fn, fallback) {
+  try { return await fn(); }
+  catch (e) { console.warn('Profile isteği başarısız:', e.message); return fallback; }
+}
 
 export default function useProfile() {
+  const authCtx      = useAuth();
+  const firebaseUser = authCtx?.firebaseUser;
+  const authLoading  = authCtx?.loading;
+
   const [profile, setProfile]       = useState(null);
   const [stats, setStats]           = useState(null);
   const [routes, setRoutes]         = useState([]);
   const [events, setEvents]         = useState([]);
   const [saved, setSaved]           = useState([]);
-  const [adminPerms, setAdminPerms] = useState(null);
+  const [adminPerms, setAdminPerms] = useState({ is_admin: false });
   const [loading, setLoading]       = useState(true);
   const [activeTab, setActiveTab]   = useState('rotalar');
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
+
       const me = await fetchMyProfile();
+      if (!me) { setLoading(false); return; }
       setProfile(me);
+
       const [statsData, routesData, eventsData, savedData, perms] = await Promise.all([
-        fetchUserStats(me.id),
-        getUserRoutes(me.id),
-        getUserEvents(me.id),
-        getSavedContent(),
-        getMyAdminPermissions().catch(() => ({ is_admin: false })),
+        safeGet(() => fetchUserStats(me.id),       null),
+        safeGet(() => getUserRoutes(me.id),        []),
+        safeGet(() => getUserEvents(me.id),        []),
+        safeGet(() => getSavedContent(),           []),
+        safeGet(() => getMyAdminPermissions(),     { is_admin: false }),
       ]);
+
       setStats(statsData);
-      setRoutes(routesData);
-      setEvents(eventsData);
-      setSaved(savedData);
-      setAdminPerms(perms);
-    } catch (e) { console.warn('Profile:', e.message); }
-    finally { setLoading(false); }
+      setRoutes(routesData   || []);
+      setEvents(eventsData   || []);
+      setSaved(savedData     || []);
+      setAdminPerms(perms    || { is_admin: false });
+    } catch (e) {
+      console.warn('Profil yüklenemedi:', e.message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!authLoading && firebaseUser) load();
+  }, [load, authLoading, firebaseUser]);
 
-  const logout = async () => {
-    await signOut(auth);
-  };
+  const logout = async () => { await signOut(auth); };
 
-  // Toplam km: routes.distance_m toplamı
-  const totalKm = routes.reduce((s, r) => s + (r.distance_m || 0), 0) / 1000;
+  const totalKm = (routes || []).reduce((s, r) => s + (r.distance_m || 0), 0) / 1000;
 
   return {
     profile, stats, routes, events, saved, adminPerms,
