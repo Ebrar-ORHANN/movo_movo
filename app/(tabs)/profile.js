@@ -23,11 +23,16 @@ const BADGES = [
 ];
 
 function StatItem({ value, label }) {
+  const display =
+    typeof value === 'number'
+      ? value % 1 === 0
+        ? value.toString()
+        : value.toFixed(1)
+      : value;
+
   return (
     <View style={styles.statItem}>
-      <Text style={styles.statValue}>
-        {typeof value === 'number' ? value.toFixed(value > 100 ? 0 : 1) : value}
-      </Text>
+      <Text style={styles.statValue}>{display}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -193,7 +198,6 @@ export default function ProfileScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t('profileTitle')}</Text>
         <View style={{ flexDirection:'row', gap:4 }}>
-          
           <TouchableOpacity onPress={() => router.push('/settings')} style={styles.headerBtn}>
             <Ionicons name="settings-outline" size={22} color="#fff" />
           </TouchableOpacity>
@@ -311,7 +315,6 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      
       <View style={{ height:100 }} />
 
       {selectedPost && (

@@ -45,7 +45,11 @@ export default function RootLayout() {
               <Stack.Screen name="post/create" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
               <Stack.Screen name="post/[id]" />
 
-              
+              {/* Rota */}
+              <Stack.Screen name="route/create" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+
+              {/* Ayarlar */}
+              <Stack.Screen name="settings" options={{ presentation: 'card', animation: 'slide_from_right' }} />
 
               {/* Modaller */}
               <Stack.Screen name="notifications"      options={{ presentation: 'modal' }} />
@@ -55,12 +59,13 @@ export default function RootLayout() {
               <Stack.Screen name="events/[id]"        />
               <Stack.Screen name="route/[id]"         />
               <Stack.Screen name="route/walk/[id]"    />
+              <Stack.Screen name="route/navigate/[id]" />
               <Stack.Screen name="poi/[id]"           />
               <Stack.Screen name="together"           options={{ presentation: 'modal' }} />
               <Stack.Screen name="live/index"         options={{ presentation: 'modal' }} />
               <Stack.Screen name="live/[id]"          />
               <Stack.Screen name="admin/index"        options={{ presentation: 'modal' }} />
-              <Stack.Screen name="route/navigate/[id]" />
+              <Stack.Screen name="search" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
               
             </Stack>
           </LanguageProvider>

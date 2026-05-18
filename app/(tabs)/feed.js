@@ -13,6 +13,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { getComments, addComment } from '../../services/feedService';
 import { StoryBar } from '../../components/stories/Stories';
+import RoutePostCard from '../../components/RoutePostCard';
 import { API_BASE } from '../../constants/api';
 import { auth } from '../../src/firebase/config';
 
@@ -222,8 +223,7 @@ function CommentsModal({ postId, visible, onClose, onCommentAdded, t }) {
 const PostCard = React.memo(({ item, onLike, onSave, onComment, onOptions }) => {
   const likeAnim = useRef(new Animated.Value(1)).current;
   const router   = useRouter();
-  // PostCard içinde, PostMedia'nın altına:
-{item.route_data && <RoutePostCard route={item.route_data} postId={item.id} />}
+
   const handleLike = () => {
     Animated.sequence([
       Animated.timing(likeAnim, { toValue: 1.4, duration: 100, useNativeDriver: true }),
@@ -247,7 +247,21 @@ const PostCard = React.memo(({ item, onLike, onSave, onComment, onOptions }) => 
         </TouchableOpacity>
       </View>
       {item.user_note ? <Text style={s.cardNote}>{item.user_note}</Text> : null}
-      <PostMedia attachments={item.attachments} />
+
+      {/* Rota kartı — route_data varsa harita olarak göster */}
+      {item.route_data ? (
+        <RoutePostCard route={item.route_data} postId={item.id} />
+      ) : (
+        <PostMedia attachments={item.attachments} />
+      )}
+
+      {/* Rota badge */}
+      {item.route_data && (
+        <View style={s.routeBadge}>
+          <Ionicons name="map-outline" size={13} color="#22C55E" />
+          <Text style={s.routeBadgeText}>Rota Paylaşımı · {item.route_data.stops?.length || 0} durak</Text>
+        </View>
+      )}
       <View style={s.cardActions}>
         <View style={s.actionLeft}>
           <TouchableOpacity onPress={handleLike} style={s.actionBtn}>
@@ -318,6 +332,9 @@ export default function FeedScreen() {
       <View style={s.header}>
         <Text style={s.headerLogo}>MOVO</Text>
         <View style={s.headerRight}>
+          <TouchableOpacity style={s.headerBtn} onPress={() => router.push('/search')}>
+  <Ionicons name="search-outline" size={23} color="#fff" />
+</TouchableOpacity>
           <TouchableOpacity style={s.addBtn} onPress={() => router.push('/post/create')}>
             <Ionicons name="add" size={20} color="#fff" />
           </TouchableOpacity>
@@ -330,7 +347,7 @@ export default function FeedScreen() {
         </View>
       </View>
 
-     
+      
 
       {loading && posts.length === 0
         ? <View style={s.loadingState}><ActivityIndicator color="#22C55E" size="large" /></View>
@@ -391,7 +408,8 @@ const s = StyleSheet.create({
   actionBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6 },
   actionCnt:     { color: '#888', fontSize: 13, fontWeight: '500' },
 
-  loadingState:  { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  routeBadge:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingTop: 6, paddingBottom: 2 },
+  routeBadgeText:{ color: '#22C55E', fontSize: 11, fontWeight: '600' },
   footer:        { padding: 20, alignItems: 'center' },
   emptyState:    { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
   emptyIcon:     { fontSize: 52, marginBottom: 12 },

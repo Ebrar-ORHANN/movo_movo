@@ -321,7 +321,7 @@ export default function ExploreScreen() {
       {/* Header */}
       <View style={s.header}>
         <View>
-          <Text style={s.title}>🧭 Kaşif Modu</Text>
+          <Text style={s.title}>🧭 Kaşif </Text>
           <Text style={s.sub}>{userLoc ? '📍 Konum aktif' : 'AI destekli keşif'}</Text>
         </View>
         <TouchableOpacity style={s.routeBtn} onPress={() => router.push('/route/create')}>
