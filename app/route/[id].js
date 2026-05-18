@@ -35,10 +35,7 @@ export default function RouteDetailScreen() {
     liked ? null : likeContent('route', id);
   };
 
-  const handleStart = async () => {
-    await startRecording(id);
-    router.push(`/route/walk/${id}`);
-  };
+ const handleStart = () => router.push(`/route/navigate/${id}`);
 
   if (loading) return (
     <View style={[s.container, s.centered, { paddingTop: insets.top }]}>

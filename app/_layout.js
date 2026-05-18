@@ -60,7 +60,7 @@ export default function RootLayout() {
               <Stack.Screen name="live/index"         options={{ presentation: 'modal' }} />
               <Stack.Screen name="live/[id]"          />
               <Stack.Screen name="admin/index"        options={{ presentation: 'modal' }} />
-              
+              <Stack.Screen name="route/navigate/[id]" />
               
             </Stack>
           </LanguageProvider>

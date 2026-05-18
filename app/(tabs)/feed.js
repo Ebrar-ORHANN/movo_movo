@@ -222,7 +222,8 @@ function CommentsModal({ postId, visible, onClose, onCommentAdded, t }) {
 const PostCard = React.memo(({ item, onLike, onSave, onComment, onOptions }) => {
   const likeAnim = useRef(new Animated.Value(1)).current;
   const router   = useRouter();
-
+  // PostCard içinde, PostMedia'nın altına:
+{item.route_data && <RoutePostCard route={item.route_data} postId={item.id} />}
   const handleLike = () => {
     Animated.sequence([
       Animated.timing(likeAnim, { toValue: 1.4, duration: 100, useNativeDriver: true }),

@@ -1,772 +1,955 @@
 // ── app/route/create.js ──────────────────────────────────────────────────────
-// 3 yöntemli rota oluşturma: LLM | Manuel | Dinamik kayıt
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+// 3 yöntemli rota oluşturma:
+//   1. LIVE   — Gezerken marker at, iz çiz (gerçek zamanlı kayıt)
+//   2. DRAW   — Harita üzerine dokunarak waypoint ekle
+//   3. AI     — LLM ile otomatik rota üret
+// Paylaşıldığında feed'de harita kartı olarak görünür.
+
+import React, {
+  useState, useRef, useCallback, useEffect, useMemo,
+} from 'react';
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
+  View, Text, StyleSheet, TouchableOpacity, TextInput,
   ScrollView, FlatList, ActivityIndicator, Alert,
   Modal, Pressable, KeyboardAvoidingView, Platform,
-  Dimensions,
+  Dimensions, Animated, PanResponder,
 } from 'react-native';
-import MapView, { Marker, UrlTile, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline, UrlTile, Circle } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
+import { BlurView } from 'expo-blur';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 import { auth } from '../../src/firebase/config';
 import { API_BASE } from '../../constants/api';
 
 const { width, height } = Dimensions.get('window');
+const MAP_HEIGHT = height * 0.52;
 
-// ── Sabitler ──────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Sabitler
+// ─────────────────────────────────────────────────────────────────────────────
 const TRANSPORT_MODES = [
-  { key: 'walking',  icon: 'walk-outline',    label: 'Yürüyüş' },
-  { key: 'cycling',  icon: 'bicycle-outline', label: 'Bisiklet' },
-  { key: 'driving',  icon: 'car-outline',     label: 'Araç' },
+  { key: 'walking',  icon: 'walk-outline',    label: 'Yürüyüş', color: '#22C55E' },
+  { key: 'cycling',  icon: 'bicycle-outline', label: 'Bisiklet', color: '#3B82F6' },
+  { key: 'driving',  icon: 'car-outline',     label: 'Araç', color: '#F97316' },
 ];
-const CATEGORIES = ['doğa', 'kültür', 'yemek', 'tarih', 'macera', 'fotoğraf'];
-const VISIBILITY  = [
+
+const VISIBILITY = [
   { key: 'public',    icon: 'earth-outline',       label: 'Herkese Açık' },
-  { key: 'followers', icon: 'people-outline',      label: 'Takipçiler'   },
-  { key: 'private',   icon: 'lock-closed-outline', label: 'Gizli'        },
-];
-const SHARE_TYPES = [
-  { key: 'both',      label: 'Rota + Medya'  },
-  { key: 'route',     label: 'Sadece Rota'   },
-  { key: 'media',     label: 'Sadece Medya'  },
+  { key: 'followers', icon: 'people-outline',      label: 'Takipçiler' },
+  { key: 'private',   icon: 'lock-closed-outline', label: 'Gizli' },
 ];
 
-// ── POI Kartı ─────────────────────────────────────────────────────────────────
-function StopCard({ stop, index, total, onUp, onDown, onDelete, onNote }) {
+const CATEGORIES = [
+  { key: 'doğa',     emoji: '🌿' },
+  { key: 'kültür',   emoji: '🏛️' },
+  { key: 'yemek',    emoji: '🍽️' },
+  { key: 'tarih',    emoji: '⚔️' },
+  { key: 'macera',   emoji: '🧗' },
+  { key: 'fotoğraf', emoji: '📸' },
+];
+
+const AI_PROMPTS = [
+  '3 saatlik tarihi yürüyüş rotası öner',
+  'Kafe ve kahve dükkanları turu yap',
+  'Doğa ve park alanları güzergahı',
+  'Fotoğraf için en iyi noktalar',
+  'Akşam yemeği ve gece rotası',
+  'Bisiklet dostu şehir turu',
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Yardımcı: Haversine mesafe (metre)
+// ─────────────────────────────────────────────────────────────────────────────
+function haversineM(lat1, lng1, lat2, lng2) {
+  const R = 6371000, d2r = Math.PI / 180;
+  const dlat = (lat2 - lat1) * d2r, dlng = (lng2 - lng1) * d2r;
+  const a = Math.sin(dlat / 2) ** 2 +
+    Math.cos(lat1 * d2r) * Math.cos(lat2 * d2r) * Math.sin(dlng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function fmtDist(m) {
+  return m > 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+}
+function fmtTime(s) {
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} dk` : `${Math.floor(m / 60)} sa ${m % 60} dk`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marker Pin bileşeni
+// ─────────────────────────────────────────────────────────────────────────────
+function WaypointPin({ index, total, isActive, color }) {
+  const bg = isActive ? '#FF9800'
+    : index === 0 ? '#22C55E'
+    : index === total - 1 ? '#3B82F6'
+    : color || '#8B5CF6';
   return (
-    <View style={sc.card}>
-      <View style={sc.seqCol}>
-        <View style={sc.seqBubble}>
-          <Text style={sc.seqText}>{index + 1}</Text>
-        </View>
-        {index < total - 1 && <View style={sc.line} />}
+    <View style={pin.outer}>
+      <View style={[pin.bubble, { backgroundColor: bg }]}>
+        <Text style={pin.label}>{index + 1}</Text>
       </View>
-
-      <View style={sc.body}>
-        <Text style={sc.name} numberOfLines={1}>{stop.name || stop.poi_name || 'İsimsiz durak'}</Text>
-        {stop.llm_comment && (
-          <View style={sc.aiComment}>
-            <Ionicons name="sparkles-outline" size={11} color="#22C55E" />
-            <Text style={sc.aiCommentText} numberOfLines={2}>{stop.llm_comment}</Text>
-          </View>
-        )}
-        {stop.best_time && (
-          <View style={sc.timeRow}>
-            <Ionicons name="time-outline" size={11} color="#f59e0b" />
-            <Text style={sc.timeText}>En iyi: {stop.best_time}</Text>
-          </View>
-        )}
-        <TextInput
-          style={sc.noteInput}
-          placeholder="Not ekle…"
-          placeholderTextColor="#333"
-          value={stop.notes || ''}
-          onChangeText={t => onNote(index, t)}
-          multiline
-        />
-      </View>
-
-      <View style={sc.actions}>
-        <TouchableOpacity onPress={() => onUp(index)} disabled={index === 0} style={sc.btn}>
-          <Ionicons name="chevron-up" size={18} color={index === 0 ? '#222' : '#888'} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => onDown(index)} disabled={index === total - 1} style={sc.btn}>
-          <Ionicons name="chevron-down" size={18} color={index === total - 1 ? '#222' : '#888'} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => onDelete(index)} style={sc.btn}>
-          <Ionicons name="trash-outline" size={16} color="#ef4444" />
-        </TouchableOpacity>
-      </View>
+      <View style={[pin.tail, { borderTopColor: bg }]} />
     </View>
   );
 }
+const pin = StyleSheet.create({
+  outer:  { alignItems: 'center' },
+  bubble: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 4, elevation: 5 },
+  label:  { color: '#fff', fontSize: 11, fontWeight: '800' },
+  tail:   { width: 0, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderTopWidth: 7, borderLeftColor: 'transparent', borderRightColor: 'transparent', marginTop: -1 },
+});
 
-// ── POI Arama Modalı ──────────────────────────────────────────────────────────
-function POISearchModal({ visible, onClose, onSelect, onCreate }) {
-  const [query, setQuery]     = useState('');
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+// ─────────────────────────────────────────────────────────────────────────────
+// Waypoint listesi satırı
+// ─────────────────────────────────────────────────────────────────────────────
+function WaypointRow({ item, index, total, onDelete, onEdit, onFocus }) {
+  const isFirst = index === 0;
+  const isLast  = index === total - 1;
+  const dotColor = isFirst ? '#22C55E' : isLast ? '#3B82F6' : '#8B5CF6';
 
-  const search = async (q) => {
-    if (!q.trim()) { setResults([]); return; }
-    setLoading(true);
-    try {
-      const data = await api.get(`/pois/search?q=${encodeURIComponent(q)}&limit=15`);
-      setResults(Array.isArray(data) ? data : data?.pois || []);
-    } catch { setResults([]); }
-    finally { setLoading(false); }
-  };
+  return (
+    <TouchableOpacity style={wr.row} onPress={() => onFocus(index)} activeOpacity={0.7}>
+      {/* Sol çizgi */}
+      <View style={wr.lineCol}>
+        <View style={[wr.dot, { backgroundColor: dotColor }]} />
+        {index < total - 1 && <View style={wr.line} />}
+      </View>
+
+      {/* İçerik */}
+      <View style={wr.body}>
+        <View style={wr.nameRow}>
+          <Text style={wr.name} numberOfLines={1}>
+            {item.name || `Durak ${index + 1}`}
+          </Text>
+          <View style={wr.actions}>
+            <TouchableOpacity style={wr.iconBtn} onPress={() => onEdit(index)}>
+              <Ionicons name="pencil-outline" size={14} color="#555" />
+            </TouchableOpacity>
+            <TouchableOpacity style={wr.iconBtn} onPress={() => onDelete(index)}>
+              <Ionicons name="trash-outline" size={14} color="#ef4444" />
+            </TouchableOpacity>
+          </View>
+        </View>
+        {item.note ? (
+          <Text style={wr.note} numberOfLines={1}>{item.note}</Text>
+        ) : null}
+        <Text style={wr.coords}>
+          {item.lat.toFixed(4)}, {item.lng.toFixed(4)}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+const wr = StyleSheet.create({
+  row:     { flexDirection: 'row', gap: 12, paddingVertical: 8 },
+  lineCol: { alignItems: 'center', width: 20, paddingTop: 4 },
+  dot:     { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#0A0A0A' },
+  line:    { flex: 1, width: 2, backgroundColor: '#1C1C1C', marginTop: 2, minHeight: 16 },
+  body:    { flex: 1, backgroundColor: '#111', borderRadius: 12, padding: 10, borderWidth: 0.5, borderColor: '#1C1C1C' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  name:    { color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 },
+  note:    { color: '#666', fontSize: 11, marginTop: 2 },
+  coords:  { color: '#333', fontSize: 10, marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  actions: { flexDirection: 'row', gap: 4 },
+  iconBtn: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1A1A1A', borderRadius: 8 },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Waypoint düzenleme modalı
+// ─────────────────────────────────────────────────────────────────────────────
+function WaypointEditModal({ visible, waypoint, index, onSave, onClose }) {
+  const [name, setName] = useState(waypoint?.name || '');
+  const [note, setNote] = useState(waypoint?.note || '');
 
   useEffect(() => {
-    const t = setTimeout(() => search(query), 400);
-    return () => clearTimeout(t);
-  }, [query]);
+    if (waypoint) { setName(waypoint.name || ''); setNote(waypoint.note || ''); }
+  }, [waypoint]);
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={mo.overlay} onPress={onClose} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={mo.sheet}>
-        <View style={mo.handle} />
-        <Text style={mo.title}>POI Ekle</Text>
-
-        <View style={mo.searchBar}>
-          <Ionicons name="search-outline" size={16} color="#555" />
-          <TextInput
-            style={mo.searchInput}
-            placeholder="Yer ara…"
-            placeholderTextColor="#444"
-            value={query}
-            onChangeText={setQuery}
-            autoFocus
-          />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={em.overlay} onPress={onClose} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={em.sheet}>
+        <View style={em.handle} />
+        <Text style={em.title}>Durak {(index ?? 0) + 1} Düzenle</Text>
+        <View style={em.field}>
+          <Text style={em.fieldLabel}>DURAK ADI</Text>
+          <TextInput style={em.input} value={name} onChangeText={setName}
+            placeholder="Örn: Atatürk Anıtı" placeholderTextColor="#333"
+            autoFocus maxLength={60} />
         </View>
-
-        {loading && <ActivityIndicator color="#22C55E" style={{ margin: 16 }} />}
-
-        <FlatList
-          data={results}
-          keyExtractor={i => String(i.id)}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }}
-          ListEmptyComponent={
-            !loading && query.length > 1 ? (
-              <TouchableOpacity style={mo.createBtn} onPress={() => { onClose(); onCreate(query); }}>
-                <Ionicons name="add-circle-outline" size={20} color="#22C55E" />
-                <Text style={mo.createText}>"{query}" adında yeni yer oluştur</Text>
-              </TouchableOpacity>
-            ) : null
-          }
-          renderItem={({ item }) => (
-            <TouchableOpacity style={mo.resultRow} onPress={() => { onSelect(item); onClose(); }}>
-              <View style={mo.resultIcon}>
-                <Ionicons name="location-outline" size={18} color="#22C55E" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={mo.resultName}>{item.name}</Text>
-                <Text style={mo.resultMeta}>{item.category}{item.city_name ? ` · ${item.city_name}` : ''}</Text>
-              </View>
-              <Ionicons name="add" size={20} color="#22C55E" />
-            </TouchableOpacity>
-          )}
-        />
+        <View style={em.field}>
+          <Text style={em.fieldLabel}>NOT (opsiyonel)</Text>
+          <TextInput style={[em.input, { minHeight: 70, textAlignVertical: 'top' }]}
+            value={note} onChangeText={setNote}
+            placeholder="Bu nokta hakkında not..." placeholderTextColor="#333"
+            multiline maxLength={200} />
+        </View>
+        <TouchableOpacity style={em.saveBtn}
+          onPress={() => { onSave(index, { name: name.trim() || `Durak ${(index ?? 0) + 1}`, note: note.trim() }); onClose(); }}>
+          <Text style={em.saveTxt}>Kaydet</Text>
+        </TouchableOpacity>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
+const em = StyleSheet.create({
+  overlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+  sheet:    { backgroundColor: '#0F0F0F', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'ios' ? 34 : 20 },
+  handle:   { width: 36, height: 4, backgroundColor: '#2A2A2A', borderRadius: 2, alignSelf: 'center', marginTop: 12, marginBottom: 4 },
+  title:    { color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center', paddingVertical: 14 },
+  field:    { paddingHorizontal: 20, marginBottom: 14 },
+  fieldLabel:{ color: '#444', fontSize: 10, fontWeight: '700', letterSpacing: 1, marginBottom: 8 },
+  input:    { backgroundColor: '#1A1A1A', color: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, borderWidth: 0.5, borderColor: '#2A2A2A' },
+  saveBtn:  { backgroundColor: '#22C55E', margin: 20, borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
+  saveTxt:  { color: '#fff', fontWeight: '700', fontSize: 15 },
+});
 
-// ── Yeni POI Oluştur Modalı ───────────────────────────────────────────────────
-function NewPOIModal({ visible, initialName, onClose, onCreate }) {
-  const [name, setName]     = useState(initialName || '');
-  const [lat, setLat]       = useState('');
-  const [lng, setLng]       = useState('');
-  const [category, setCategory] = useState('other');
-  const [desc, setDesc]     = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const handleCreate = async () => {
-    if (!name.trim() || !lat || !lng) { Alert.alert('Hata', 'İsim ve koordinat gerekli'); return; }
-    setSaving(true);
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      const res = await fetch(`${API_BASE}/pois/user-create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ name: name.trim(), lat: parseFloat(lat), lng: parseFloat(lng), category, description: desc }),
-      });
-      if (!res.ok) throw new Error('POI oluşturulamadı');
-      const data = await res.json();
-      Alert.alert('Gönderildi', 'POI admin onayına gönderildi. Rotana şimdi eklendi.');
-      onCreate({ ...data, pending: true });
-      onClose();
-    } catch (e) { Alert.alert('Hata', e.message); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={mo.overlay} onPress={onClose} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={mo.sheet}>
-        <View style={mo.handle} />
-        <Text style={mo.title}>Yeni Yer Oluştur</Text>
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
-          <View style={mo.infoBox}>
-            <Ionicons name="information-circle-outline" size={16} color="#f59e0b" />
-            <Text style={mo.infoText}>Admin onayından sonra herkesin erişimine açılır. Şimdilik sadece senin rotanda görünür.</Text>
-          </View>
-          <TextInput style={mo.field} placeholder="Yer adı *" placeholderTextColor="#444" value={name} onChangeText={setName} />
-          <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TextInput style={[mo.field, { flex: 1 }]} placeholder="Enlem (lat)" placeholderTextColor="#444" value={lat} onChangeText={setLat} keyboardType="numeric" />
-            <TextInput style={[mo.field, { flex: 1 }]} placeholder="Boylam (lng)" placeholderTextColor="#444" value={lng} onChangeText={setLng} keyboardType="numeric" />
-          </View>
-          <TextInput style={[mo.field, { height: 80, textAlignVertical: 'top' }]} placeholder="Açıklama" placeholderTextColor="#444" value={desc} onChangeText={setDesc} multiline />
-          <TouchableOpacity style={mo.saveBtn} onPress={handleCreate} disabled={saving}>
-            {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={mo.saveBtnText}>Oluştur & Rotaya Ekle</Text>}
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-// ── Rota Ayarları ─────────────────────────────────────────────────────────────
-function RouteSettings({ settings, onChange }) {
-  return (
-    <View style={rs.container}>
-      <TextInput
-        style={rs.titleInput}
-        placeholder="Rota başlığı"
-        placeholderTextColor="#444"
-        value={settings.title}
-        onChangeText={v => onChange({ ...settings, title: v })}
-      />
-      <TextInput
-        style={rs.descInput}
-        placeholder="Açıklama (opsiyonel)"
-        placeholderTextColor="#444"
-        value={settings.description}
-        onChangeText={v => onChange({ ...settings, description: v })}
-        multiline
-      />
-
-      {/* Ulaşım modu */}
-      <Text style={rs.label}>Ulaşım</Text>
-      <View style={rs.chipRow}>
-        {TRANSPORT_MODES.map(m => (
-          <TouchableOpacity
-            key={m.key}
-            style={[rs.chip, settings.transport_mode === m.key && rs.chipActive]}
-            onPress={() => onChange({ ...settings, transport_mode: m.key })}
-          >
-            <Ionicons name={m.icon} size={16} color={settings.transport_mode === m.key ? '#22C55E' : '#666'} />
-            <Text style={[rs.chipText, settings.transport_mode === m.key && rs.chipTextActive]}>{m.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Gizlilik */}
-      <Text style={rs.label}>Gizlilik</Text>
-      <View style={rs.chipRow}>
-        {VISIBILITY.map(v => (
-          <TouchableOpacity
-            key={v.key}
-            style={[rs.chip, settings.visibility === v.key && rs.chipActive]}
-            onPress={() => onChange({ ...settings, visibility: v.key })}
-          >
-            <Ionicons name={v.icon} size={14} color={settings.visibility === v.key ? '#22C55E' : '#666'} />
-            <Text style={[rs.chipText, settings.visibility === v.key && rs.chipTextActive]}>{v.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Paylaşım türü */}
-      <Text style={rs.label}>Ne paylaşılsın?</Text>
-      <View style={rs.chipRow}>
-        {SHARE_TYPES.map(s => (
-          <TouchableOpacity
-            key={s.key}
-            style={[rs.chip, settings.share_type === s.key && rs.chipActive]}
-            onPress={() => onChange({ ...settings, share_type: s.key })}
-          >
-            <Text style={[rs.chipText, settings.share_type === s.key && rs.chipTextActive]}>{s.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-// ── Ana ekran ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Ana Ekran
+// ─────────────────────────────────────────────────────────────────────────────
 export default function RouteCreateScreen() {
-  const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const insets   = useSafeAreaInsets();
+  const router   = useRouter();
   const { profile } = useAuth();
+  const mapRef   = useRef(null);
 
-  const [method, setMethod]   = useState('llm');   // llm | manuel | dynamic
-  const [stops, setStops]     = useState([]);
-  const [settings, setSettings] = useState({
-    title: '', description: '', transport_mode: 'walking',
-    visibility: 'private', share_type: 'both',
+  // ── Mod: live | draw | ai ────────────────────────────────────────────────
+  const [mode, setMode] = useState('draw');
+
+  // ── Waypoints ──────────────────────────────────────────────────────────
+  const [waypoints, setWaypoints] = useState([]);
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+
+  // ── Harita ─────────────────────────────────────────────────────────────
+  const [region, setRegion] = useState({
+    latitude: 39.9208, longitude: 32.8541,
+    latitudeDelta: 0.05, longitudeDelta: 0.05,
   });
+  const [drawMode, setDrawMode] = useState(false); // haritaya dokunarak ekle
 
-  // LLM
-  const [llmQuery, setLlmQuery]   = useState('');
-  const [llmLoading, setLlmLoading] = useState(false);
-  const [cityId, setCityId]       = useState(null);
+  // ── Live kayıt ─────────────────────────────────────────────────────────
+  const [recording, setRecording]     = useState(false);
+  const [trail, setTrail]             = useState([]);
+  const [currentLoc, setCurrentLoc]   = useState(null);
+  const [elapsed, setElapsed]         = useState(0);
+  const [distM, setDistM]             = useState(0);
+  const locWatcher  = useRef(null);
+  const timerRef    = useRef(null);
+  const startTime   = useRef(null);
+  const lastLocRef  = useRef(null);
+  const dynRouteId  = useRef(null);
 
-  // Manuel
-  const [showSearch, setShowSearch]   = useState(false);
-  const [showNewPOI, setShowNewPOI]   = useState(false);
-  const [newPOIName, setNewPOIName]   = useState('');
+  // ── AI ─────────────────────────────────────────────────────────────────
+  const [aiPrompt, setAiPrompt]     = useState('');
+  const [aiLoading, setAiLoading]   = useState(false);
+  const [cityId]                    = useState(null); // detect from location
 
-  // Dinamik
-  const [recording, setRecording]   = useState(false);
-  const [trail, setTrail]           = useState([]);
-  const [currentLoc, setCurrentLoc] = useState(null);
-  const [dynRouteId, setDynRouteId] = useState(null);
-  const locWatcher = useRef(null);
-  const mapRef     = useRef(null);
+  // ── Rota ayarları ───────────────────────────────────────────────────────
+  const [title, setTitle]           = useState('');
+  const [description, setDesc]      = useState('');
+  const [transport, setTransport]   = useState('walking');
+  const [visibility, setVisibility] = useState('public');
+  const [category, setCategory]     = useState('doğa');
 
-  // Kaydet
-  const [saving, setSaving] = useState(false);
+  // ── UI ──────────────────────────────────────────────────────────────────
+  const [saving, setSaving]         = useState(false);
+  const [showSettings, setSettings] = useState(false);
+  const sheetAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // ── Durak işlemleri ─────────────────────────────────────────────────────────
-  const moveUp = (i) => {
-    if (i === 0) return;
-    const s = [...stops];
-    [s[i - 1], s[i]] = [s[i], s[i - 1]];
-    setStops(s.map((x, idx) => ({ ...x, seq: idx + 1 })));
-  };
-  const moveDown = (i) => {
-    if (i === stops.length - 1) return;
-    const s = [...stops];
-    [s[i], s[i + 1]] = [s[i + 1], s[i]];
-    setStops(s.map((x, idx) => ({ ...x, seq: idx + 1 })));
-  };
-  const deleteStop = (i) => setStops(prev => prev.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, seq: idx + 1 })));
-  const updateNote = (i, note) => setStops(prev => prev.map((s, idx) => idx === i ? { ...s, notes: note } : s));
+  // Kayıt sırasında nabız animasyonu
+  useEffect(() => {
+    if (!recording) { pulseAnim.setValue(1); return; }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.3, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [recording]);
 
-  const addPOI = (poi) => {
-    setStops(prev => [...prev, {
-      poi_id:    poi.id,
-      poi_name:  poi.name,
-      name:      poi.name,
-      lat:       poi.lat || poi.latitude  || 0,
-      lng:       poi.lng || poi.longitude || 0,
-      seq:       prev.length + 1,
-      notes:     '',
-      pending:   poi.pending || false,
-    }]);
-  };
+  // ── Konum izni & ilk konum ─────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const loc = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+      setCurrentLoc(loc);
+      setRegion({ ...loc, latitudeDelta: 0.02, longitudeDelta: 0.02 });
+    })();
+    return () => {
+      locWatcher.current?.remove();
+      timerRef.current && clearInterval(timerRef.current);
+    };
+  }, []);
 
-  // ── LLM rota üret ──────────────────────────────────────────────────────────
-  const generateLLMRoute = async () => {
-    if (!llmQuery.trim()) return;
-    if (!cityId) { Alert.alert('Şehir gerekli', 'Lütfen önce bir şehir seçin.'); return; }
-    setLlmLoading(true);
-    try {
-      const data = await api.post('/routes/generate/llm', {
-        city_id:        cityId,
-        preferences:    [llmQuery],
-        duration_hours: 4,
-        transport_mode: settings.transport_mode,
-      });
-      const plan = data.llm_plan;
-      if (plan?.title) setSettings(s => ({ ...s, title: s.title || plan.title }));
-
-      // LLM'in seçtiği durakları stops'a ekle
-      const newStops = (plan?.stops || []).map((stop, i) => ({
-        poi_id:      stop.poi_id,
-        name:        stop.name || `Durak ${i + 1}`,
-        lat:         stop.lat || 0,
-        lng:         stop.lng || 0,
-        seq:         i + 1,
-        notes:       '',
-        llm_comment: stop.comment || '',
-        best_time:   stop.suggested_time || '',
-      }));
-      setStops(newStops);
-      if (plan?.description) setSettings(s => ({ ...s, description: s.description || plan.description }));
-    } catch (e) { Alert.alert('LLM Hatası', e.message); }
-    finally { setLlmLoading(false); }
-  };
-
-  // ── Dinamik kayıt ──────────────────────────────────────────────────────────
-  const startRecording = async () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // LIVE KAYIT
+  // ─────────────────────────────────────────────────────────────────────────
+  const startLiveRecording = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Konum izni gerekli'); return; }
-
-    // Backend'de boş rota oluştur
-    try {
-      const data = await api.post('/routes', {
-        title:          'Kayıt ' + new Date().toLocaleTimeString('tr-TR'),
-        visibility:     'private',
-        transport_mode: settings.transport_mode,
-        stops:          [],
-      });
-      setDynRouteId(data.route?.id || data.id);
-      await api.patch(`/routes/${data.route?.id || data.id}/recording/start`);
-    } catch { /* ilerle */ }
-
+    setTrail([]); setDistM(0); setElapsed(0);
+    startTime.current = Date.now();
     setRecording(true);
-    setTrail([]);
+
+    timerRef.current = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startTime.current) / 1000)),
+      1000
+    );
 
     locWatcher.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
+      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 5 },
       (pos) => {
         const coord = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         setCurrentLoc(coord);
-        setTrail(prev => [...prev, coord]);
-        mapRef.current?.animateToRegion({ ...coord, latitudeDelta: 0.005, longitudeDelta: 0.005 }, 500);
+        setTrail(prev => {
+          if (prev.length > 0) {
+            const last = prev[prev.length - 1];
+            const d = haversineM(last.latitude, last.longitude, coord.latitude, coord.longitude);
+            setDistM(m => m + d);
+          }
+          return [...prev, coord];
+        });
+        mapRef.current?.animateToRegion(
+          { ...coord, latitudeDelta: 0.005, longitudeDelta: 0.005 }, 800
+        );
       }
     );
   };
 
-  const stopRecording = async () => {
+  const stopLiveRecording = () => {
     locWatcher.current?.remove();
     locWatcher.current = null;
+    clearInterval(timerRef.current);
     setRecording(false);
-    if (dynRouteId) {
-      try { await api.patch(`/routes/${dynRouteId}/recording/stop`); } catch { /* devam */ }
-    }
   };
 
-  const addDynStop = () => {
+  const dropMarkerAtCurrent = () => {
     if (!currentLoc) { Alert.alert('Konum bekleniyor'); return; }
-    setShowSearch(true);
+    const wp = {
+      lat: currentLoc.latitude,
+      lng: currentLoc.longitude,
+      name: `Durak ${waypoints.length + 1}`,
+      note: '',
+      timestamp: Date.now(),
+    };
+    setWaypoints(prev => [...prev, wp]);
+    // Marker eklendi animasyonu için state flash yok, sadece ekliyoruz
   };
 
-  // ── Rotayı kaydet ──────────────────────────────────────────────────────────
-  const saveRoute = async (publish = false) => {
-    if (!settings.title.trim()) { Alert.alert('Başlık gerekli'); return; }
-    if (stops.length < 1) { Alert.alert('En az 1 durak gerekli'); return; }
+  // ─────────────────────────────────────────────────────────────────────────
+  // DRAW MODU — haritaya dokun → waypoint
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleMapPress = (e) => {
+    if (!drawMode) return;
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    const wp = {
+      lat: latitude,
+      lng: longitude,
+      name: `Durak ${waypoints.length + 1}`,
+      note: '',
+      timestamp: Date.now(),
+    };
+    setWaypoints(prev => [...prev, wp]);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // AI ROTA
+  // ─────────────────────────────────────────────────────────────────────────
+  const generateAIRoute = async (prompt) => {
+    const q = (prompt || aiPrompt).trim();
+    if (!q) return;
+    setAiLoading(true);
+    try {
+      const res = await api.post('/explorer/chat', {
+        message: q,
+        lat: currentLoc?.latitude || null,
+        lng: currentLoc?.longitude || null,
+        history: [],
+      });
+      if (res?.locations?.length) {
+        const newWps = res.locations
+          .filter(l => l.lat && l.lng)
+          .map((l, i) => ({
+            lat: l.lat,
+            lng: l.lng,
+            name: l.name || `Durak ${i + 1}`,
+            note: l.description || '',
+            timestamp: Date.now() + i,
+          }));
+        setWaypoints(newWps);
+        if (!title && res.route_suggestion?.title) setTitle(res.route_suggestion.title);
+        if (newWps.length > 0) {
+          mapRef.current?.fitToCoordinates(
+            newWps.map(w => ({ latitude: w.lat, longitude: w.lng })),
+            { edgePadding: { top: 60, right: 40, bottom: 60, left: 40 }, animated: true }
+          );
+        }
+      }
+    } catch (e) { Alert.alert('AI Hatası', e.message); }
+    finally { setAiLoading(false); }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Waypoint işlemleri
+  // ─────────────────────────────────────────────────────────────────────────
+  const deleteWaypoint = (idx) => setWaypoints(prev => prev.filter((_, i) => i !== idx));
+
+  const editWaypoint = (idx, data) => {
+    setWaypoints(prev => prev.map((w, i) => i === idx ? { ...w, ...data } : w));
+  };
+
+  const focusWaypoint = (idx) => {
+    const wp = waypoints[idx];
+    if (!wp) return;
+    mapRef.current?.animateToRegion(
+      { latitude: wp.lat, longitude: wp.lng, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+      600
+    );
+  };
+
+  const undoLast = () => setWaypoints(prev => prev.slice(0, -1));
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Kaydet & Paylaş
+  // ─────────────────────────────────────────────────────────────────────────
+  const totalDist = useMemo(() => {
+    let d = 0;
+    for (let i = 1; i < waypoints.length; i++) {
+      d += haversineM(waypoints[i - 1].lat, waypoints[i - 1].lng, waypoints[i].lat, waypoints[i].lng);
+    }
+    return d;
+  }, [waypoints]);
+
+  const handleSave = async (publish = true) => {
+    if (!title.trim()) { Alert.alert('Başlık gerekli', 'Rotana bir isim ver.'); return; }
+    if (waypoints.length < 2) { Alert.alert('En az 2 durak', 'Haritaya en az 2 nokta ekle.'); return; }
     setSaving(true);
     try {
-      const vis = publish ? settings.visibility : 'private';
       const body = {
-        title:          settings.title,
-        description:    settings.description,
-        transport_mode: settings.transport_mode,
-        visibility:     vis,
-        share_type:     settings.share_type,
-        stops:          stops.map(s => ({ poi_id: s.poi_id, seq: s.seq, lat: s.lat, lng: s.lng, name: s.name, notes: s.notes || '' })),
+        title: title.trim(),
+        description: description.trim() || null,
+        transport_mode: transport,
+        visibility: publish ? visibility : 'private',
+        category,
+        // Trail verisi — feed'de harita önizlemesi için
+        trail_coords: trail.length > 1
+          ? trail.map(c => ({ lat: c.latitude, lng: c.longitude }))
+          : null,
+        distance_m: Math.round(totalDist),
+        stops: waypoints.map((w, i) => ({
+          lat: w.lat, lng: w.lng,
+          name: w.name,
+          notes: w.note || '',
+          seq: i + 1,
+        })),
       };
-
-      if (dynRouteId) {
-        await api.patch(`/routes/${dynRouteId}`, body);
-        router.replace(`/route/${dynRouteId}`);
-      } else {
-        const data = await api.post('/routes', body);
-        const newId = data.route?.id || data.id;
-        router.replace(`/route/${newId}`);
-      }
-    } catch (e) { Alert.alert('Kayıt hatası', e.message); }
+      const data = await api.post('/routes', body);
+      const newId = data?.route?.id || data?.id;
+      Alert.alert(
+        publish ? '🗺️ Rota Paylaşıldı!' : '📥 Taslak Kaydedildi',
+        publish
+          ? 'Rotanı takipçilerin görebilir. Paylaşımında harita olarak görünecek.'
+          : 'Rotanı daha sonra yayınlayabilirsin.',
+        [{ text: 'Tamam', onPress: () => router.replace(newId ? `/route/${newId}` : '/(tabs)/feed') }]
+      );
+    } catch (e) { Alert.alert('Hata', e.message); }
     finally { setSaving(false); }
   };
 
-  useEffect(() => () => { locWatcher.current?.remove(); }, []);
+  // ─────────────────────────────────────────────────────────────────────────
+  // Polyline koordinatları
+  // ─────────────────────────────────────────────────────────────────────────
+  const polyCoords = waypoints.map(w => ({ latitude: w.lat, longitude: w.lng }));
+  const trailColor = TRANSPORT_MODES.find(t => t.key === transport)?.color || '#22C55E';
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
   return (
-    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <View style={s.container}>
 
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Rota Oluştur</Text>
-        <TouchableOpacity
-          style={s.draftBtn}
-          onPress={() => saveRoute(false)}
-          disabled={saving}
+      {/* ── Harita ── */}
+      <View style={{ height: MAP_HEIGHT }}>
+        <MapView
+          ref={mapRef}
+          style={StyleSheet.absoluteFill}
+          initialRegion={region}
+          onPress={handleMapPress}
+          showsUserLocation
+          showsCompass={false}
+          showsScale={false}
         >
-          <Text style={s.draftText}>Taslak</Text>
-        </TouchableOpacity>
-      </View>
+          {/* Live trail */}
+          {trail.length > 1 && (
+            <Polyline
+              coordinates={trail}
+              strokeColor={`${trailColor}55`}
+              strokeWidth={3}
+              lineDashPattern={[6, 4]}
+            />
+          )}
 
-      {/* Yöntem seçimi */}
-      <View style={s.methodBar}>
-        {[
-          { key: 'llm',     icon: 'sparkles-outline',  label: 'AI'       },
-          { key: 'manuel',  icon: 'map-outline',        label: 'Manuel'   },
-          { key: 'dynamic', icon: 'navigate-outline',   label: 'Dinamik'  },
-        ].map(m => (
-          <TouchableOpacity
-            key={m.key}
-            style={[s.methodBtn, method === m.key && s.methodBtnActive]}
-            onPress={() => setMethod(m.key)}
-          >
-            <Ionicons name={m.icon} size={18} color={method === m.key ? '#22C55E' : '#555'} />
-            <Text style={[s.methodText, method === m.key && s.methodTextActive]}>{m.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+          {/* Waypoint polyline */}
+          {polyCoords.length > 1 && (
+            <Polyline
+              coordinates={polyCoords}
+              strokeColor={trailColor}
+              strokeWidth={4}
+              lineJoin="round"
+            />
+          )}
 
-      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 120 }}>
-
-        {/* ── LLM YÖNTEMİ ────────────────────────────────────────────────── */}
-        {method === 'llm' && (
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>Rotanı Tarif Et</Text>
-            <Text style={s.sectionSub}>
-              "Ankara'da 4 saatlik tarihi yürüyüş rotası" gibi istediğini yaz
-            </Text>
-            <View style={s.llmInput}>
-              <TextInput
-                style={s.llmTextInput}
-                placeholder="Nasıl bir rota istiyorsun?"
-                placeholderTextColor="#444"
-                value={llmQuery}
-                onChangeText={setLlmQuery}
-                multiline
-                maxLength={300}
+          {/* Waypoint markers */}
+          {waypoints.map((wp, i) => (
+            <Marker
+              key={`wp-${i}-${wp.timestamp}`}
+              coordinate={{ latitude: wp.lat, longitude: wp.lng }}
+              onPress={() => { setEditingIdx(i); setShowEditModal(true); }}
+              tracksViewChanges={false}
+            >
+              <WaypointPin
+                index={i}
+                total={waypoints.length}
+                isActive={false}
+                color={trailColor}
               />
+            </Marker>
+          ))}
+        </MapView>
+
+        {/* Harita üst overlay */}
+        <LinearGradient
+          colors={['rgba(0,0,0,0.65)', 'transparent']}
+          style={s.mapTopGrad}
+          pointerEvents="none"
+        />
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.5)']}
+          style={s.mapBottomGrad}
+          pointerEvents="none"
+        />
+
+        {/* Header */}
+        <View style={[s.header, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+
+          <View style={s.modeTabs}>
+            {[
+              { key: 'draw', icon: 'finger-print-outline', label: 'Çiz' },
+              { key: 'live', icon: 'radio-button-on-outline', label: 'Canlı' },
+              { key: 'ai',   icon: 'sparkles-outline', label: 'AI' },
+            ].map(m => (
               <TouchableOpacity
-                style={[s.llmSendBtn, (!llmQuery.trim() || llmLoading) && s.llmSendBtnOff]}
-                onPress={generateLLMRoute}
-                disabled={!llmQuery.trim() || llmLoading}
+                key={m.key}
+                style={[s.modeTab, mode === m.key && s.modeTabActive]}
+                onPress={() => { setMode(m.key); if (recording) stopLiveRecording(); }}
               >
-                {llmLoading
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Ionicons name="arrow-forward" size={20} color="#fff" />
-                }
+                <Ionicons name={m.icon} size={13} color={mode === m.key ? '#22C55E' : '#888'} />
+                <Text style={[s.modeTabTxt, mode === m.key && { color: '#22C55E' }]}>{m.label}</Text>
               </TouchableOpacity>
-            </View>
-            {llmLoading && (
-              <View style={s.llmLoading}>
-                <ActivityIndicator color="#22C55E" />
-                <Text style={s.llmLoadingText}>AI rotayı oluşturuyor…</Text>
+            ))}
+          </View>
+
+          <TouchableOpacity style={s.settingsBtn} onPress={() => setSettings(!showSettings)}>
+            <Ionicons name="options-outline" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Live HUD */}
+        {mode === 'live' && (
+          <View style={s.liveHud}>
+            {recording && (
+              <View style={s.liveStats}>
+                <Animated.View style={[s.recDot, { transform: [{ scale: pulseAnim }] }]} />
+                <Text style={s.liveStat}>{fmtTime(elapsed)}</Text>
+                <View style={s.hudDiv} />
+                <Text style={s.liveStat}>{fmtDist(distM)}</Text>
+                <View style={s.hudDiv} />
+                <Text style={s.liveStat}>{trail.length} nokta</Text>
               </View>
             )}
           </View>
         )}
 
-        {/* ── MANUEL YÖNTEMİ ─────────────────────────────────────────────── */}
-        {method === 'manuel' && (
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>POI Ara & Ekle</Text>
-            <TouchableOpacity style={s.addPoiBtn} onPress={() => setShowSearch(true)}>
-              <Ionicons name="search-outline" size={18} color="#22C55E" />
-              <Text style={s.addPoiBtnText}>Yer ara ve ekle</Text>
-              <Ionicons name="add" size={20} color="#22C55E" />
+        {/* Draw modu ipucu */}
+        {mode === 'draw' && drawMode && (
+          <View style={s.drawHint}>
+            <Ionicons name="hand-left-outline" size={14} color="#22C55E" />
+            <Text style={s.drawHintTxt}>Haritaya dokun → marker ekle</Text>
+          </View>
+        )}
+
+        {/* Waypoint sayacı */}
+        {waypoints.length > 0 && (
+          <View style={s.wpCounter}>
+            <Text style={s.wpCounterTxt}>{waypoints.length}</Text>
+            <Text style={s.wpCounterSub}>durak</Text>
+          </View>
+        )}
+
+        {/* Harita aksiyonları */}
+        <View style={s.mapActions}>
+          {/* Mode-specific butonlar */}
+          {mode === 'draw' && (
+            <TouchableOpacity
+              style={[s.mapFab, drawMode && { backgroundColor: '#22C55E' }]}
+              onPress={() => setDrawMode(!drawMode)}
+            >
+              <Ionicons name={drawMode ? 'checkmark' : 'add-outline'} size={22} color="#fff" />
+            </TouchableOpacity>
+          )}
+
+          {mode === 'live' && !recording && (
+            <TouchableOpacity style={[s.mapFab, { backgroundColor: '#ef4444' }]} onPress={startLiveRecording}>
+              <Ionicons name="radio-button-on" size={22} color="#fff" />
+            </TouchableOpacity>
+          )}
+
+          {mode === 'live' && recording && (
+            <>
+              <TouchableOpacity style={[s.mapFab, { backgroundColor: '#22C55E' }]} onPress={dropMarkerAtCurrent}>
+                <Ionicons name="location" size={20} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.mapFab, { backgroundColor: '#ef4444' }]} onPress={stopLiveRecording}>
+                <Ionicons name="stop" size={20} color="#fff" />
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* Geri al */}
+          {waypoints.length > 0 && (
+            <TouchableOpacity style={s.mapFabSm} onPress={undoLast}>
+              <Ionicons name="arrow-undo" size={18} color="#ccc" />
+            </TouchableOpacity>
+          )}
+
+          {/* Rotaya sığdır */}
+          {polyCoords.length > 1 && (
+            <TouchableOpacity style={s.mapFabSm} onPress={() =>
+              mapRef.current?.fitToCoordinates(polyCoords, {
+                edgePadding: { top: 80, right: 40, bottom: 80, left: 40 }, animated: true,
+              })
+            }>
+              <Ionicons name="expand-outline" size={18} color="#ccc" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* ── Alt panel ── */}
+      <View style={s.panel}>
+
+        {/* AI modu arama */}
+        {mode === 'ai' && (
+          <View style={s.aiBar}>
+            <View style={s.aiInput}>
+              <Ionicons name="sparkles-outline" size={16} color="#22C55E" />
+              <TextInput
+                style={s.aiTextInput}
+                placeholder="Nasıl bir rota oluşturayım?"
+                placeholderTextColor="#444"
+                value={aiPrompt}
+                onChangeText={setAiPrompt}
+                onSubmitEditing={() => generateAIRoute()}
+                returnKeyType="search"
+              />
+              {aiPrompt.length > 0 && (
+                <TouchableOpacity onPress={() => setAiPrompt('')}>
+                  <Ionicons name="close-circle" size={16} color="#444" />
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity
+              style={[s.aiSendBtn, (!aiPrompt.trim() || aiLoading) && { opacity: 0.5 }]}
+              onPress={() => generateAIRoute()}
+              disabled={!aiPrompt.trim() || aiLoading}
+            >
+              {aiLoading ? <ActivityIndicator color="#fff" size="small" /> :
+                <Ionicons name="arrow-forward" size={18} color="#fff" />}
             </TouchableOpacity>
           </View>
         )}
 
-        {/* ── DİNAMİK YÖNTEMİ ────────────────────────────────────────────── */}
-        {method === 'dynamic' && (
-          <View>
-            {/* Harita */}
-            <MapView
-              ref={mapRef}
-              style={{ width, height: 260 }}
-              initialRegion={currentLoc
-                ? { ...currentLoc, latitudeDelta: 0.005, longitudeDelta: 0.005 }
-                : { latitude: 39.92, longitude: 32.85, latitudeDelta: 0.1, longitudeDelta: 0.1 }
-              }
-            >
-              <UrlTile urlTemplate="https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png" maximumZ={19} flipY={false} tileSize={256} />
-              {trail.length > 1 && <Polyline coordinates={trail} strokeColor="#22C55E" strokeWidth={3} />}
-              {currentLoc && (
-                <Marker coordinate={currentLoc}>
-                  <View style={s.userDot}><View style={s.userDotInner} /></View>
-                </Marker>
-              )}
-              {stops.map((st, i) => st.lat && st.lng ? (
-                <Marker key={i} coordinate={{ latitude: st.lat, longitude: st.lng }} title={st.name}>
-                  <View style={s.stopPin}><Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{i + 1}</Text></View>
-                </Marker>
-              ) : null)}
-            </MapView>
+        {/* AI hızlı öneriler */}
+        {mode === 'ai' && !aiLoading && waypoints.length === 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.promptScroll}>
+            {AI_PROMPTS.map((p, i) => (
+              <TouchableOpacity key={i} style={s.promptChip} onPress={() => { setAiPrompt(p); generateAIRoute(p); }}>
+                <Text style={s.promptTxt}>{p}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
 
-            <View style={s.dynControls}>
-              {!recording ? (
-                <TouchableOpacity style={s.startBtn} onPress={startRecording}>
-                  <Ionicons name="radio-button-on" size={20} color="#fff" />
-                  <Text style={s.startBtnText}>Kaydı Başlat</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <TouchableOpacity style={s.addStopBtn} onPress={addDynStop}>
-                    <Ionicons name="add-circle-outline" size={18} color="#22C55E" />
-                    <Text style={s.addStopText}>Durak Ekle</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.stopBtn} onPress={stopRecording}>
-                    <Ionicons name="stop-circle-outline" size={18} color="#fff" />
-                    <Text style={s.stopBtnText}>Durdur</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-              {recording && (
-                <View style={s.recIndicator}>
-                  <View style={s.recDot} />
-                  <Text style={s.recText}>Kayıt · {trail.length} nokta</Text>
-                </View>
-              )}
+        {aiLoading && (
+          <View style={s.aiLoading}>
+            <ActivityIndicator color="#22C55E" />
+            <Text style={s.aiLoadingTxt}>AI rotanı hazırlıyor…</Text>
+          </View>
+        )}
+
+        {/* Mesafe özeti */}
+        {waypoints.length >= 2 && (
+          <View style={s.summary}>
+            <View style={s.summaryItem}>
+              <Ionicons name="navigate-outline" size={14} color="#22C55E" />
+              <Text style={s.summaryVal}>{fmtDist(totalDist)}</Text>
+            </View>
+            <View style={s.summaryDiv} />
+            <View style={s.summaryItem}>
+              <Ionicons name="pin-outline" size={14} color="#22C55E" />
+              <Text style={s.summaryVal}>{waypoints.length} durak</Text>
+            </View>
+            <View style={s.summaryDiv} />
+            {/* Transport ikonu */}
+            <View style={s.summaryItem}>
+              <Text style={{ fontSize: 14 }}>
+                {transport === 'walking' ? '🚶' : transport === 'cycling' ? '🚴' : '🚗'}
+              </Text>
+              <Text style={s.summaryVal}>{TRANSPORT_MODES.find(t => t.key === transport)?.label}</Text>
             </View>
           </View>
         )}
 
-        {/* ── DURAKLAR (tüm yöntemlerde) ─────────────────────────────────── */}
-        {stops.length > 0 && (
-          <View style={s.section}>
-            <View style={s.sectionHeader}>
-              <Text style={s.sectionTitle}>Duraklar ({stops.length})</Text>
-              <TouchableOpacity style={s.addMoreBtn} onPress={() => setShowSearch(true)}>
-                <Ionicons name="add" size={18} color="#22C55E" />
-                <Text style={s.addMoreText}>Ekle</Text>
-              </TouchableOpacity>
-            </View>
-            {stops.map((stop, i) => (
-              <StopCard
-                key={`${stop.poi_id || stop.name}-${i}`}
-                stop={stop} index={i} total={stops.length}
-                onUp={moveUp} onDown={moveDown} onDelete={deleteStop} onNote={updateNote}
+        {/* Başlık input */}
+        <View style={s.titleRow}>
+          <TextInput
+            style={s.titleInput}
+            placeholder="Rotana bir isim ver…"
+            placeholderTextColor="#333"
+            value={title}
+            onChangeText={setTitle}
+            maxLength={80}
+          />
+        </View>
+
+        {/* Waypoint listesi */}
+        {waypoints.length > 0 ? (
+          <View style={s.waypointList}>
+            {waypoints.map((wp, i) => (
+              <WaypointRow
+                key={`${wp.timestamp}-${i}`}
+                item={wp} index={i} total={waypoints.length}
+                onDelete={deleteWaypoint}
+                onEdit={(idx) => { setEditingIdx(idx); setShowEditModal(true); }}
+                onFocus={focusWaypoint}
               />
             ))}
           </View>
-        )}
-
-        {stops.length === 0 && method !== 'dynamic' && (
-          <View style={s.emptyStops}>
-            <Text style={s.emptyStopsIcon}>🗺️</Text>
-            <Text style={s.emptyStopsText}>
-              {method === 'llm' ? 'AI ile rota oluştur, duraklar buraya gelecek' : 'Yer arayarak durak ekle'}
-            </Text>
+        ) : (
+          <View style={s.emptyList}>
+            {mode === 'draw' ? (
+              <>
+                <Text style={s.emptyIcon}>👆</Text>
+                <Text style={s.emptyTxt}>
+                  {drawMode
+                    ? 'Haritaya dokunarak durak ekle'
+                    : '"+" butonuna basıp haritaya dokunarak başla'}
+                </Text>
+              </>
+            ) : mode === 'live' ? (
+              <>
+                <Text style={s.emptyIcon}>📡</Text>
+                <Text style={s.emptyTxt}>
+                  {recording
+                    ? '📍 butonuna basarak istediğin yerlere marker at'
+                    : 'Kayıt butonuna bas, gezerken marker ekle'}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={s.emptyIcon}>🤖</Text>
+                <Text style={s.emptyTxt}>Yukarıya rotanı tarif et</Text>
+              </>
+            )}
           </View>
         )}
 
-        {/* ── ROTA AYARLARI ─────────────────────────────────────────────── */}
-        <RouteSettings settings={settings} onChange={setSettings} />
-      </ScrollView>
+        {/* Ayarlar paneli */}
+        {showSettings && (
+          <View style={s.settingsPanel}>
+            {/* Transport */}
+            <Text style={s.setLabel}>ULAŞIM</Text>
+            <View style={s.chipRow}>
+              {TRANSPORT_MODES.map(m => (
+                <TouchableOpacity key={m.key}
+                  style={[s.chip, transport === m.key && { borderColor: m.color, backgroundColor: `${m.color}18` }]}
+                  onPress={() => setTransport(m.key)}>
+                  <Ionicons name={m.icon} size={14} color={transport === m.key ? m.color : '#666'} />
+                  <Text style={[s.chipTxt, transport === m.key && { color: m.color }]}>{m.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
-      {/* Alt butonlar */}
-      <View style={[s.footer, { paddingBottom: insets.bottom + 12 }]}>
-        <TouchableOpacity style={s.publishBtn} onPress={() => saveRoute(true)} disabled={saving}>
+            {/* Visibility */}
+            <Text style={s.setLabel}>KİMLER GÖREBİLİR</Text>
+            <View style={s.chipRow}>
+              {VISIBILITY.map(v => (
+                <TouchableOpacity key={v.key}
+                  style={[s.chip, visibility === v.key && { borderColor: '#22C55E', backgroundColor: '#0A2A1A' }]}
+                  onPress={() => setVisibility(v.key)}>
+                  <Ionicons name={v.icon} size={14} color={visibility === v.key ? '#22C55E' : '#666'} />
+                  <Text style={[s.chipTxt, visibility === v.key && { color: '#22C55E' }]}>{v.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Kategori */}
+            <Text style={s.setLabel}>KATEGORİ</Text>
+            <View style={s.chipRow}>
+              {CATEGORIES.map(c => (
+                <TouchableOpacity key={c.key}
+                  style={[s.chip, category === c.key && { borderColor: '#22C55E', backgroundColor: '#0A2A1A' }]}
+                  onPress={() => setCategory(c.key)}>
+                  <Text style={{ fontSize: 14 }}>{c.emoji}</Text>
+                  <Text style={[s.chipTxt, category === c.key && { color: '#22C55E' }]}>{c.key}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Açıklama */}
+            <Text style={s.setLabel}>AÇIKLAMA</Text>
+            <TextInput
+              style={s.descInput}
+              placeholder="Rota hakkında kısa bilgi…"
+              placeholderTextColor="#333"
+              value={description}
+              onChangeText={setDesc}
+              multiline
+              maxLength={300}
+            />
+          </View>
+        )}
+      </View>
+
+      {/* ── Alt butonlar ── */}
+      <View style={[s.footer, { paddingBottom: insets.bottom + 10 }]}>
+        <TouchableOpacity style={s.draftBtn} onPress={() => handleSave(false)} disabled={saving}>
+          <Ionicons name="save-outline" size={16} color="#888" />
+          <Text style={s.draftTxt}>Taslak</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.publishBtn, saving && { opacity: 0.6 }]}
+          onPress={() => handleSave(true)} disabled={saving}>
           {saving
             ? <ActivityIndicator color="#fff" size="small" />
             : <>
-                <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-                <Text style={s.publishText}>Yayınla</Text>
+                <Ionicons name="map" size={18} color="#fff" />
+                <Text style={s.publishTxt}>Rotayı Paylaş</Text>
               </>
           }
         </TouchableOpacity>
-        <TouchableOpacity style={s.saveOnlyBtn} onPress={() => saveRoute(false)} disabled={saving}>
-          <Text style={s.saveOnlyText}>Taslak Kaydet</Text>
-        </TouchableOpacity>
       </View>
 
-      {/* POI Arama Modalı */}
-      <POISearchModal
-        visible={showSearch}
-        onClose={() => setShowSearch(false)}
-        onSelect={addPOI}
-        onCreate={(name) => { setNewPOIName(name); setShowNewPOI(true); }}
+      {/* Waypoint düzenleme modalı */}
+      <WaypointEditModal
+        visible={showEditModal}
+        waypoint={editingIdx !== null ? waypoints[editingIdx] : null}
+        index={editingIdx}
+        onSave={editWaypoint}
+        onClose={() => { setShowEditModal(false); setEditingIdx(null); }}
       />
-
-      {/* Yeni POI Oluştur Modalı */}
-      <NewPOIModal
-        visible={showNewPOI}
-        initialName={newPOIName}
-        onClose={() => setShowNewPOI(false)}
-        onCreate={addPOI}
-      />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
-// ── Stiller ───────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Stiller
+// ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  container:       { flex: 1, backgroundColor: '#0A0A0A' },
-  header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: '#1C1C1C' },
-  backBtn:         { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle:     { color: '#fff', fontSize: 18, fontWeight: '700' },
-  draftBtn:        { paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#1A1A1A', borderRadius: 10, borderWidth: 0.5, borderColor: '#333' },
-  draftText:       { color: '#888', fontSize: 13 },
+  container:      { flex: 1, backgroundColor: '#0A0A0A' },
 
-  methodBar:       { flexDirection: 'row', margin: 16, backgroundColor: '#111', borderRadius: 14, padding: 4, borderWidth: 0.5, borderColor: '#1C1C1C' },
-  methodBtn:       { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12 },
-  methodBtnActive: { backgroundColor: '#1A1A1A' },
-  methodText:      { color: '#555', fontSize: 12 },
-  methodTextActive:{ color: '#22C55E', fontWeight: '600' },
+  // Header
+  header:         { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 10, gap: 10, zIndex: 10 },
+  backBtn:        { width: 38, height: 38, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 19, alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.1)' },
+  modeTabs:       { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(10,10,10,0.8)', borderRadius: 14, padding: 3, gap: 2, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)' },
+  modeTab:        { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 7, borderRadius: 12 },
+  modeTabActive:  { backgroundColor: 'rgba(34,197,94,0.15)' },
+  modeTabTxt:     { color: '#888', fontSize: 11, fontWeight: '600' },
+  settingsBtn:    { width: 38, height: 38, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 19, alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.1)' },
 
-  section:         { paddingHorizontal: 16, marginBottom: 8 },
-  sectionHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  sectionTitle:    { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 4 },
-  sectionSub:      { color: '#555', fontSize: 12, marginBottom: 12, lineHeight: 18 },
+  // Map overlays
+  mapTopGrad:     { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
+  mapBottomGrad:  { position: 'absolute', bottom: 0, left: 0, right: 0, height: 80 },
 
-  llmInput:        { backgroundColor: '#111', borderRadius: 14, padding: 12, borderWidth: 0.5, borderColor: '#1C1C1C', flexDirection: 'row', gap: 10, alignItems: 'flex-end' },
-  llmTextInput:    { flex: 1, color: '#fff', fontSize: 14, lineHeight: 20, maxHeight: 100 },
-  llmSendBtn:      { width: 40, height: 40, backgroundColor: '#22C55E', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  llmSendBtnOff:   { backgroundColor: '#1A3A1A', opacity: 0.5 },
-  llmLoading:      { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 14, backgroundColor: '#0A2A1A', borderRadius: 12 },
-  llmLoadingText:  { color: '#22C55E', fontSize: 13 },
+  // Live HUD
+  liveHud:        { position: 'absolute', top: 90, alignSelf: 'center' },
+  liveStats:      { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(0,0,0,0.75)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 0.5, borderColor: '#22C55E' },
+  recDot:         { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444' },
+  liveStat:       { color: '#fff', fontSize: 13, fontWeight: '700' },
+  hudDiv:         { width: 0.5, height: 14, backgroundColor: '#333' },
 
-  addPoiBtn:       { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#111', borderRadius: 14, padding: 14, borderWidth: 0.5, borderColor: '#22C55E' },
-  addPoiBtnText:   { flex: 1, color: '#22C55E', fontSize: 14, fontWeight: '500' },
+  // Draw hint
+  drawHint:       { position: 'absolute', top: 100, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7, borderWidth: 0.5, borderColor: '#22C55E' },
+  drawHintTxt:    { color: '#22C55E', fontSize: 12, fontWeight: '600' },
 
-  dynControls:     { padding: 16, gap: 10 },
-  startBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#22C55E', borderRadius: 14, padding: 14 },
-  startBtnText:    { color: '#fff', fontSize: 16, fontWeight: '700' },
-  addStopBtn:      { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#0A2A1A', borderRadius: 12, padding: 12, borderWidth: 0.5, borderColor: '#22C55E' },
-  addStopText:     { color: '#22C55E', fontWeight: '600', fontSize: 13 },
-  stopBtn:         { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#2A0A0A', borderRadius: 12, padding: 12 },
-  stopBtnText:     { color: '#ef4444', fontWeight: '600', fontSize: 13 },
-  recIndicator:    { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  recDot:          { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444' },
-  recText:         { color: '#888', fontSize: 12 },
+  // Waypoint counter
+  wpCounter:      { position: 'absolute', bottom: 16, left: 16, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', borderWidth: 0.5, borderColor: '#22C55E' },
+  wpCounterTxt:   { color: '#22C55E', fontSize: 18, fontWeight: '800' },
+  wpCounterSub:   { color: '#22C55E', fontSize: 9, fontWeight: '600' },
 
-  userDot:         { width: 20, height: 20, borderRadius: 10, backgroundColor: '#3b82f6', borderWidth: 3, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  userDotInner:    { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
-  stopPin:         { width: 26, height: 26, borderRadius: 13, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
+  // Map action buttons
+  mapActions:     { position: 'absolute', right: 14, bottom: 16, gap: 8 },
+  mapFab:         { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(10,10,10,0.9)', alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: '#333', shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 6, elevation: 6 },
+  mapFabSm:       { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(10,10,10,0.9)', alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: '#222' },
 
-  addMoreBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  addMoreText:     { color: '#22C55E', fontSize: 13, fontWeight: '600' },
+  // Panel
+  panel:          { flex: 1, backgroundColor: '#0A0A0A', paddingHorizontal: 16, paddingTop: 14 },
 
-  emptyStops:      { alignItems: 'center', padding: 40 },
-  emptyStopsIcon:  { fontSize: 40, marginBottom: 10 },
-  emptyStopsText:  { color: '#444', fontSize: 13, textAlign: 'center', lineHeight: 20 },
+  // AI bar
+  aiBar:          { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  aiInput:        { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#111', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0.5, borderColor: '#1C1C1C' },
+  aiTextInput:    { flex: 1, color: '#fff', fontSize: 13 },
+  aiSendBtn:      { width: 44, height: 44, backgroundColor: '#22C55E', borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  promptScroll:   { marginBottom: 8 },
+  promptChip:     { backgroundColor: '#111', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8, borderWidth: 0.5, borderColor: '#1C1C1C' },
+  promptTxt:      { color: '#888', fontSize: 12 },
+  aiLoading:      { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#0A1F0A', borderRadius: 12, padding: 12, marginBottom: 10 },
+  aiLoadingTxt:   { color: '#22C55E', fontSize: 13 },
 
-  footer:          { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 12, backgroundColor: '#0A0A0A', borderTopWidth: 0.5, borderTopColor: '#1C1C1C' },
-  publishBtn:      { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#22C55E', borderRadius: 14, paddingVertical: 14 },
-  publishText:     { color: '#fff', fontWeight: '700', fontSize: 15 },
-  saveOnlyBtn:     { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', borderRadius: 14, paddingVertical: 14, borderWidth: 0.5, borderColor: '#333' },
-  saveOnlyText:    { color: '#888', fontSize: 14 },
-});
+  // Summary
+  summary:        { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10, borderWidth: 0.5, borderColor: '#1C1C1C', gap: 12 },
+  summaryItem:    { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  summaryVal:     { color: '#ccc', fontSize: 12, fontWeight: '600' },
+  summaryDiv:     { width: 0.5, height: 16, backgroundColor: '#2A2A2A' },
 
-// StopCard stilleri
-const sc = StyleSheet.create({
-  card:        { flexDirection: 'row', marginBottom: 4, paddingHorizontal: 16 },
-  seqCol:      { alignItems: 'center', width: 32, paddingTop: 14 },
-  seqBubble:   { width: 24, height: 24, borderRadius: 12, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center' },
-  seqText:     { color: '#fff', fontSize: 11, fontWeight: '700' },
-  line:        { flex: 1, width: 2, backgroundColor: '#1C1C1C', marginTop: 4, minHeight: 20 },
-  body:        { flex: 1, backgroundColor: '#111', borderRadius: 12, padding: 10, marginLeft: 8, borderWidth: 0.5, borderColor: '#1C1C1C' },
-  name:        { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 4 },
-  aiComment:   { flexDirection: 'row', gap: 5, backgroundColor: '#0A1F0A', borderRadius: 8, padding: 6, marginBottom: 4 },
-  aiCommentText:{ color: '#22C55E', fontSize: 11, lineHeight: 16, flex: 1 },
-  timeRow:     { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
-  timeText:    { color: '#f59e0b', fontSize: 11 },
-  noteInput:   { color: '#888', fontSize: 12, borderTopWidth: 0.5, borderTopColor: '#1C1C1C', marginTop: 6, paddingTop: 6 },
-  actions:     { flexDirection: 'column', justifyContent: 'center', gap: 2, paddingLeft: 4 },
-  btn:         { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-});
+  // Title input
+  titleRow:       { marginBottom: 10 },
+  titleInput:     { color: '#fff', fontSize: 16, fontWeight: '600', borderBottomWidth: 0.5, borderBottomColor: '#1C1C1C', paddingBottom: 10 },
 
-// RouteSettings stilleri
-const rs = StyleSheet.create({
-  container:     { margin: 16, backgroundColor: '#111', borderRadius: 16, padding: 16, borderWidth: 0.5, borderColor: '#1C1C1C' },
-  titleInput:    { color: '#fff', fontSize: 16, fontWeight: '600', borderBottomWidth: 0.5, borderBottomColor: '#1C1C1C', paddingBottom: 10, marginBottom: 10 },
-  descInput:     { color: '#aaa', fontSize: 13, borderBottomWidth: 0.5, borderBottomColor: '#1C1C1C', paddingBottom: 10, marginBottom: 14, maxHeight: 80 },
-  label:         { color: '#666', fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8 },
-  chipRow:       { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
-  chip:          { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#1A1A1A', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 0.5, borderColor: '#2A2A2A' },
-  chipActive:    { backgroundColor: '#0A2A1A', borderColor: '#22C55E' },
-  chipText:      { color: '#666', fontSize: 12 },
-  chipTextActive:{ color: '#22C55E', fontWeight: '600' },
-});
+  // Waypoint list
+  waypointList:   { flex: 1 },
 
-// Modal stilleri
-const mo = StyleSheet.create({
-  overlay:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet:       { backgroundColor: '#111', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%', paddingBottom: Platform.OS === 'ios' ? 30 : 16 },
-  handle:      { width: 36, height: 4, backgroundColor: '#333', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 4 },
-  title:       { color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center', paddingVertical: 12 },
-  searchBar:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 12, backgroundColor: '#1A1A1A', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
-  searchInput: { flex: 1, color: '#fff', fontSize: 14 },
-  resultRow:   { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#1A1A1A' },
-  resultIcon:  { width: 34, height: 34, backgroundColor: '#0A2A1A', borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  resultName:  { color: '#fff', fontSize: 14, fontWeight: '600' },
-  resultMeta:  { color: '#666', fontSize: 12, marginTop: 2 },
-  createBtn:   { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 16, backgroundColor: '#0A2A1A', borderRadius: 12, marginTop: 8 },
-  createText:  { color: '#22C55E', fontSize: 13, fontWeight: '600', flex: 1 },
-  infoBox:     { flexDirection: 'row', gap: 8, backgroundColor: '#1A1500', borderRadius: 10, padding: 10 },
-  infoText:    { color: '#f59e0b', fontSize: 12, lineHeight: 18, flex: 1 },
-  field:       { backgroundColor: '#1A1A1A', color: '#fff', borderRadius: 10, padding: 12, fontSize: 14, borderWidth: 0.5, borderColor: '#2A2A2A' },
-  saveBtn:     { backgroundColor: '#22C55E', borderRadius: 14, padding: 14, alignItems: 'center' },
-  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  // Empty
+  emptyList:      { alignItems: 'center', paddingVertical: 20, gap: 8 },
+  emptyIcon:      { fontSize: 32 },
+  emptyTxt:       { color: '#444', fontSize: 13, textAlign: 'center', lineHeight: 20, maxWidth: 260 },
+
+  // Settings panel
+  settingsPanel:  { backgroundColor: '#0F0F0F', borderRadius: 16, padding: 14, marginTop: 8, borderWidth: 0.5, borderColor: '#1C1C1C', gap: 10 },
+  setLabel:       { color: '#444', fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  chipRow:        { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  chip:           { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#111', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 0.5, borderColor: '#2A2A2A' },
+  chipTxt:        { color: '#666', fontSize: 12 },
+  descInput:      { backgroundColor: '#111', color: '#ccc', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, borderWidth: 0.5, borderColor: '#1C1C1C', minHeight: 70, textAlignVertical: 'top' },
+
+  // Footer
+  footer:         { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, borderTopWidth: 0.5, borderTopColor: '#1C1C1C', backgroundColor: '#0A0A0A' },
+  draftBtn:       { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, paddingVertical: 14, backgroundColor: '#111', borderRadius: 16, borderWidth: 0.5, borderColor: '#1C1C1C' },
+  draftTxt:       { color: '#888', fontSize: 14 },
+  publishBtn:     { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#22C55E', borderRadius: 16, paddingVertical: 14 },
+  publishTxt:     { color: '#fff', fontWeight: '700', fontSize: 15 },
 });
