@@ -1,37 +1,31 @@
 // ── hooks/useUserLocation.js ─────────────────────────────────────────────────
-// Expo Location ile kullanıcı konumunu alır.
-// Dönen format: { coords: { latitude, longitude } } — expo-location ile aynı yapı
-// DiscoverScreen ve diğer ekranlar location.coords.latitude şeklinde kullanır.
-
+import { useState, useEffect } from 'react';
 import * as Location from 'expo-location';
-import { useEffect, useState } from 'react';
 
 export default function useUserLocation() {
-  const [location, setLocation] = useState(null);
-  const [error, setError]       = useState(null);
+  const [location, setLocation]   = useState(null);
+  const [error, setError]         = useState(null);
+  const [loading, setLoading]     = useState(true);
 
   useEffect(() => {
-    let isMounted = true;
-
     (async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
-          if (isMounted) setError('Konum izni reddedildi');
+          setError('Konum izni verilmedi');
           return;
         }
-        const loc = await Location.getCurrentPositionAsync({
+        const pos = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
-        // Expo-location'ın orijinal formatını koru: { coords: { latitude, longitude, ... } }
-        if (isMounted) setLocation(loc);
+        setLocation(pos);
       } catch (e) {
-        if (isMounted) setError(e.message);
+        setError(e.message);
+      } finally {
+        setLoading(false);
       }
     })();
-
-    return () => { isMounted = false; };
   }, []);
 
-  return { location, error };
+  return { location, error, loading };
 }

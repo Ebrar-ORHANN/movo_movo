@@ -1,190 +1,273 @@
-// ── app/events/[id].js ───────────────────────────────────────────────────────
-// DB: events, event_attendees, event_stops, waiting_room
-// QR check-in: check_in_token → POST /events/check-in → participation_score artar (trigger)
-
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+// ── app/user/[id].js ─────────────────────────────────────────────────────────
+// Başka bir kullanıcının profil sayfası
+// Gizlilik kuralları backend tarafından uygulanır
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, Image,
+  TouchableOpacity, ActivityIndicator, Alert,
+  FlatList, Dimensions,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { getEvent, joinEvent, leaveEvent, EVENT_CATEGORY_MAP } from '../../services/eventService';
+import { useAuth } from '../../context/AuthContext';
+import { api } from '../../services/api';
 
-export default function EventDetailScreen() {
+const { width } = Dimensions.get('window');
+const GRID = (width - 4) / 3;
+
+export default function UserProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { id } = useLocalSearchParams();
-  const [event,   setEvent]   = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [joining, setJoining] = useState(false);
+  const { id }  = useLocalSearchParams();
+  const { profile: me } = useAuth();
 
-  useEffect(() => {
-    getEvent(id).then(setEvent).catch(console.warn).finally(() => setLoading(false));
+  const [user, setUser]         = useState(null);
+  const [posts, setPosts]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [following, setFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+  const [restricted, setRestricted] = useState(false); // followers-only kısıtlaması
+
+  const isOwn = id === me?.id;
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const data = await api.get(`/users/${id}`);
+      setUser(data);
+      setFollowing(!!data.is_following);
+      setRestricted(!!data.restricted);
+
+      // Kısıtlı değilse postları da getir
+      if (!data.restricted && data.privacy !== 'private') {
+        try {
+          const p = await api.get(`/social/users/${id}/posts`);
+          setPosts(Array.isArray(p) ? p : []);
+        } catch { setPosts([]); }
+      }
+    } catch (e) {
+      if (e.message?.includes('403') || e.message?.includes('gizli')) {
+        Alert.alert('Gizli Profil', 'Bu profil gizlidir.', [{ text: 'Geri Dön', onPress: () => router.back() }]);
+      } else {
+        Alert.alert('Hata', 'Profil yüklenemedi.'); router.back();
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
-  const handleJoin = async () => {
-    setJoining(true);
+  useEffect(() => { load(); }, [load]);
+
+  const handleFollow = async () => {
+    setFollowLoading(true);
     try {
-      await joinEvent(id);
-      setEvent(e => ({ ...e, is_attending: true, attendee_cnt: (e.attendee_cnt||0)+1 }));
+      if (following) {
+        await api.delete(`/users/${id}/follow`);
+        setFollowing(false);
+        setUser(prev => prev ? { ...prev, follower_cnt: (prev.follower_cnt || 1) - 1 } : prev);
+      } else {
+        await api.post(`/users/${id}/follow`);
+        setFollowing(true);
+        setUser(prev => prev ? { ...prev, follower_cnt: (prev.follower_cnt || 0) + 1 } : prev);
+        // Gizli profil ise takip isteği gönderildi
+        if (user?.privacy === 'private') {
+          Alert.alert('Takip İsteği Gönderildi', 'Kullanıcı isteğinizi onayladıktan sonra profilini görebilirsiniz.');
+        }
+      }
     } catch (e) {
-      // Dolu ise waiting_room'a eklenir
-      if (e.message.includes('full') || e.message.includes('dolu')) {
-        Alert.alert('Etkinlik Dolu', 'Bekleme listesine alındın. Yer açılırsa bildirim alırsın.');
-      } else Alert.alert('Hata', e.message);
-    } finally { setJoining(false); }
+      Alert.alert('Hata', e.message);
+    } finally {
+      setFollowLoading(false);
+    }
   };
 
-  const handleLeave = async () => {
-    Alert.alert('Etkinlikten Çık', 'Etkinliği bırakmak istediğine emin misin?', [
-      { text: 'İptal', style: 'cancel' },
-      { text: 'Bırak', style: 'destructive', onPress: async () => {
-        await leaveEvent(id);
-        setEvent(e => ({ ...e, is_attending: false, attendee_cnt: Math.max(0,(e.attendee_cnt||1)-1) }));
-      }},
-    ]);
-  };
+  if (loading) {
+    return (
+      <View style={[s.container, { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator color="#22C55E" size="large" />
+      </View>
+    );
+  }
 
-  if (loading) return (
-    <View style={[s.container, s.centered, { paddingTop: insets.top }]}>
-      <ActivityIndicator color="#22C55E" size="large" />
-    </View>
-  );
+  if (!user) return null;
 
-  if (!event) return (
-    <View style={[s.container, s.centered, { paddingTop: insets.top }]}>
-      <Text style={{ color:'#888' }}>Etkinlik bulunamadı</Text>
-    </View>
-  );
-
-  const cat = EVENT_CATEGORY_MAP[event.categories?.[0]] || EVENT_CATEGORY_MAP.other;
-  const isFull = event.attendee_cnt >= (event.max_participants || Infinity);
-  const statusColor = event.status === 'upcoming' ? '#22C55E' : event.status === 'ongoing' ? '#F59E0B' : '#888';
+  const initials = (user.display_name || user.username || '?').slice(0, 1).toUpperCase();
+  const isPrivate = user.privacy === 'private';
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      {/* Başlık */}
+      {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={s.title} numberOfLines={1}>{event.title}</Text>
+        <Text style={s.headerTitle}>@{user.username}</Text>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Görsel */}
-        <View style={s.banner}>
-          <Text style={{ fontSize:48 }}>{cat.icon}</Text>
-          <View style={[s.statusPill, { backgroundColor: statusColor }]}>
-            <Text style={s.statusText}>{event.status}</Text>
+        {/* Profil bilgisi */}
+        <View style={s.profileRow}>
+          {user.avatar_url
+            ? <Image source={{ uri: user.avatar_url }} style={s.avatar} />
+            : <View style={[s.avatar, s.avatarFallback]}><Text style={s.avatarText}>{initials}</Text></View>
+          }
+          <View style={s.stats}>
+            <View style={s.statItem}>
+              <Text style={s.statValue}>{user.post_cnt || 0}</Text>
+              <Text style={s.statLabel}>Gönderi</Text>
+            </View>
+            <View style={s.statItem}>
+              <Text style={s.statValue}>{user.follower_cnt || 0}</Text>
+              <Text style={s.statLabel}>Takipçi</Text>
+            </View>
+            <View style={s.statItem}>
+              <Text style={s.statValue}>{user.following_cnt || 0}</Text>
+              <Text style={s.statLabel}>Takip</Text>
+            </View>
           </View>
         </View>
 
-        {/* Bilgiler */}
-        <View style={s.section}>
-          <View style={s.infoRow}>
-            <Ionicons name="calendar-outline" size={16} color="#888" />
-            <Text style={s.infoTxt}>
-              {event.start_time ? new Date(event.start_time).toLocaleString('tr-TR') : '—'}
-            </Text>
-          </View>
-          <View style={s.infoRow}>
-            <Ionicons name="people-outline" size={16} color="#888" />
-            <Text style={s.infoTxt}>
-              {event.attendee_cnt || 0} / {event.max_participants || '∞'} katılımcı
-            </Text>
-          </View>
-          {event.location_text && (
-            <View style={s.infoRow}>
-              <Ionicons name="location-outline" size={16} color="#888" />
-              <Text style={s.infoTxt}>{event.location_text}</Text>
+        {/* İsim & bio */}
+        <View style={s.bioSection}>
+          <Text style={s.displayName}>{user.display_name || user.username}</Text>
+          {user.bio ? <Text style={s.bio}>{user.bio}</Text> : null}
+          {user.city_name ? (
+            <View style={s.locationRow}>
+              <Ionicons name="location-outline" size={13} color="#888" />
+              <Text style={s.locationText}>{user.city_name}</Text>
             </View>
-          )}
-          {event.participation_pts > 0 && (
-            <View style={s.scoreInfo}>
-              <Ionicons name="star-outline" size={14} color="#22C55E" />
-              <Text style={s.scoreInfoTxt}>Check-in'de +{event.participation_pts} katılım puanı</Text>
-            </View>
-          )}
+          ) : null}
         </View>
 
-        {/* Açıklama */}
-        {event.description && (
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>Hakkında</Text>
-            <Text style={s.desc}>{event.description}</Text>
-          </View>
-        )}
-
-        {/* Etiketler */}
-        {event.categories?.length > 0 && (
-          <View style={s.tagsRow}>
-            {event.categories.map((c,i) => (
-              <View key={i} style={s.tag}>
-                <Text style={s.tagTxt}>{EVENT_CATEGORY_MAP[c]?.label || c}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        <View style={{ height: 100 }} />
-      </ScrollView>
-
-      {/* Alt katılım butonu */}
-      <View style={[s.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        {event.is_attending ? (
-          <View style={s.attendingRow}>
-            <View style={s.attendingBadge}>
-              <Ionicons name="checkmark-circle" size={18} color="#22C55E" />
-              <Text style={s.attendingTxt}>Katılıyorsun</Text>
-            </View>
-            <TouchableOpacity style={s.leaveBtn} onPress={handleLeave}>
-              <Text style={s.leaveTxt}>Bırak</Text>
+        {/* Takip / Mesaj butonları */}
+        {!isOwn && (
+          <View style={s.actions}>
+            <TouchableOpacity
+              style={[s.followBtn, following && s.followingBtn]}
+              onPress={handleFollow}
+              disabled={followLoading}
+            >
+              {followLoading
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={[s.followBtnText, following && s.followingBtnText]}>
+                    {following ? 'Takip Ediliyor' : isPrivate ? 'Takip İsteği Gönder' : 'Takip Et'}
+                  </Text>
+              }
+            </TouchableOpacity>
+            <TouchableOpacity style={s.msgBtn} onPress={() => Alert.alert('Yakında', 'Mesajlaşma yakında!')}>
+              <Text style={s.msgBtnText}>Mesaj</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <TouchableOpacity
-            style={[s.joinBtn, (isFull || joining) && s.joinBtnDisabled]}
-            onPress={handleJoin}
-            disabled={joining}
-          >
-            {joining ? <ActivityIndicator color="#fff" size="small" /> : (
-              <>
-                <Ionicons name="add-circle-outline" size={20} color="#fff" />
-                <Text style={s.joinTxt}>{isFull ? 'Bekleme Listesine Gir' : 'Katıl'}</Text>
-              </>
-            )}
-          </TouchableOpacity>
         )}
-      </View>
+
+        {/* Kısıtlı profil uyarısı */}
+        {restricted && (
+          <View style={s.restrictedBox}>
+            <Ionicons name="lock-closed-outline" size={32} color="#555" />
+            <Text style={s.restrictedTitle}>Bu Hesap Gizli</Text>
+            <Text style={s.restrictedDesc}>
+              Bu kişinin fotoğraflarını ve videolarını görmek için takip isteği gönder.
+            </Text>
+          </View>
+        )}
+
+        {/* Tamamen gizli profil */}
+        {isPrivate && !following && !isOwn && (
+          <View style={s.restrictedBox}>
+            <Ionicons name="lock-closed-outline" size={32} color="#555" />
+            <Text style={s.restrictedTitle}>Gizli Hesap</Text>
+            <Text style={s.restrictedDesc}>
+              Bu hesabı takip ettiğinizde fotoğraflarını ve videolarını görebilirsiniz.
+            </Text>
+          </View>
+        )}
+
+        {/* Post grid */}
+        {!restricted && !isPrivate && posts.length > 0 && (
+          <View style={s.grid}>
+            {posts.map(p => {
+              const hasImg = p.attachments?.length > 0;
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  style={s.gridCell}
+                  onPress={() => router.push(`/post/${p.id}`)}
+                  activeOpacity={0.85}
+                >
+                  {hasImg
+                    ? <Image source={{ uri: p.attachments[0].storage_path }} style={s.gridImg} resizeMode="cover" />
+                    : <View style={[s.gridImg, s.gridText]}>
+                        <Text style={s.gridTextPreview} numberOfLines={3}>{p.user_note || ''}</Text>
+                      </View>
+                  }
+                  <View style={s.gridOverlay}>
+                    <Ionicons name="heart" size={12} color="#fff" />
+                    <Text style={s.gridLikes}>{p.like_cnt || 0}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+
+        {!restricted && !isPrivate && posts.length === 0 && !loading && (
+          <View style={s.emptyState}>
+            <Text style={s.emptyIcon}>📸</Text>
+            <Text style={s.emptyText}>Henüz gönderi yok</Text>
+          </View>
+        )}
+
+        <View style={{ height: 60 }} />
+      </ScrollView>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  container:    { flex:1, backgroundColor:'#0D0D0D' },
-  centered:     { alignItems:'center', justifyContent:'center' },
-  header:       { flexDirection:'row', alignItems:'center', gap:12, paddingHorizontal:16, paddingBottom:12 },
-  title:        { flex:1, color:'#fff', fontSize:18, fontWeight:'700' },
-  banner:       { height:180, backgroundColor:'#111', alignItems:'center', justifyContent:'center', position:'relative' },
-  statusPill:   { position:'absolute', top:14, right:14, paddingHorizontal:12, paddingVertical:4, borderRadius:12 },
-  statusText:   { color:'#fff', fontSize:12, fontWeight:'600', textTransform:'capitalize' },
-  section:      { padding:16, borderBottomWidth:0.5, borderBottomColor:'#111' },
-  sectionTitle: { color:'#fff', fontSize:16, fontWeight:'600', marginBottom:10 },
-  infoRow:      { flexDirection:'row', alignItems:'center', gap:10, marginBottom:8 },
-  infoTxt:      { color:'#ccc', fontSize:14, flex:1 },
-  scoreInfo:    { flexDirection:'row', alignItems:'center', gap:6, backgroundColor:'#0A1F0A', borderRadius:10, padding:8, marginTop:4 },
-  scoreInfoTxt: { color:'#22C55E', fontSize:13 },
-  desc:         { color:'#ccc', fontSize:14, lineHeight:21 },
-  tagsRow:      { flexDirection:'row', flexWrap:'wrap', gap:6, padding:16 },
-  tag:          { backgroundColor:'#1A1A1A', paddingHorizontal:12, paddingVertical:5, borderRadius:10, borderWidth:0.5, borderColor:'#2A2A2A' },
-  tagTxt:       { color:'#888', fontSize:12 },
-  bottomBar:    { backgroundColor:'#0D0D0D', paddingHorizontal:16, paddingTop:12, borderTopWidth:0.5, borderTopColor:'#111' },
-  attendingRow: { flexDirection:'row', alignItems:'center', gap:12 },
-  attendingBadge:{ flex:1, flexDirection:'row', alignItems:'center', gap:8, backgroundColor:'#0A1F0A', borderRadius:14, padding:14 },
-  attendingTxt: { color:'#22C55E', fontSize:15, fontWeight:'600' },
-  leaveBtn:     { paddingHorizontal:18, paddingVertical:14, borderRadius:14, backgroundColor:'#1A1A1A', borderWidth:0.5, borderColor:'#2A2A2A' },
-  leaveTxt:     { color:'#888', fontSize:14 },
-  joinBtn:      { flexDirection:'row', alignItems:'center', justifyContent:'center', gap:8, backgroundColor:'#22C55E', borderRadius:14, paddingVertical:16 },
-  joinBtnDisabled:{ backgroundColor:'#166534', opacity:0.7 },
-  joinTxt:      { color:'#fff', fontSize:16, fontWeight:'700' },
+  container:        { flex: 1, backgroundColor: '#0D0D0D' },
+  header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: '#1C1C1C' },
+  backBtn:          { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle:      { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  profileRow:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 20, paddingBottom: 14, gap: 20 },
+  avatar:           { width: 86, height: 86, borderRadius: 43, borderWidth: 2, borderColor: '#22C55E' },
+  avatarFallback:   { backgroundColor: '#1A3A1A', alignItems: 'center', justifyContent: 'center' },
+  avatarText:       { color: '#22C55E', fontSize: 34, fontWeight: '700' },
+  stats:            { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
+  statItem:         { alignItems: 'center' },
+  statValue:        { color: '#fff', fontSize: 18, fontWeight: '700' },
+  statLabel:        { color: '#888', fontSize: 12, marginTop: 2 },
+
+  bioSection:       { paddingHorizontal: 16, paddingBottom: 14 },
+  displayName:      { color: '#fff', fontSize: 15, fontWeight: '700' },
+  bio:              { color: '#aaa', fontSize: 13, marginTop: 4, lineHeight: 18 },
+  locationRow:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 },
+  locationText:     { color: '#888', fontSize: 12 },
+
+  actions:          { flexDirection: 'row', gap: 10, paddingHorizontal: 16, marginBottom: 16 },
+  followBtn:        { flex: 1, backgroundColor: '#22C55E', borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  followingBtn:     { backgroundColor: '#1A1A1A', borderWidth: 1, borderColor: '#333' },
+  followBtnText:    { color: '#fff', fontWeight: '700', fontSize: 14 },
+  followingBtnText: { color: '#aaa' },
+  msgBtn:           { flex: 1, backgroundColor: '#1A1A1A', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  msgBtnText:       { color: '#fff', fontWeight: '600', fontSize: 14 },
+
+  restrictedBox:    { alignItems: 'center', paddingVertical: 50, paddingHorizontal: 40, borderTopWidth: 0.5, borderTopColor: '#1C1C1C', marginTop: 10 },
+  restrictedTitle:  { color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 14, marginBottom: 8 },
+  restrictedDesc:   { color: '#666', fontSize: 13, textAlign: 'center', lineHeight: 20 },
+
+  grid:             { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
+  gridCell:         { width: GRID, height: GRID, position: 'relative' },
+  gridImg:          { width: '100%', height: '100%' },
+  gridText:         { backgroundColor: '#1A2E1A', padding: 8, justifyContent: 'center' },
+  gridTextPreview:  { color: '#aaa', fontSize: 11, lineHeight: 16 },
+  gridOverlay:      { position: 'absolute', bottom: 4, left: 6, flexDirection: 'row', alignItems: 'center', gap: 3 },
+  gridLikes:        { color: '#fff', fontSize: 11, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+
+  emptyState:       { alignItems: 'center', paddingVertical: 50 },
+  emptyIcon:        { fontSize: 40, marginBottom: 10 },
+  emptyText:        { color: '#555', fontSize: 14 },
 });

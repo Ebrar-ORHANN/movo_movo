@@ -35,7 +35,7 @@ export default function LoginScreen() {
       // 1. Firebase Auth — token alınır
       const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
       // 2. Backend — users tablosundan profil çek (account_status kontrolü)
-      const token = await cred.user.getIdToken();
+      const token = await cred.user.getIdToken(true);
       await loginBackend(token);
       router.replace('/(tabs)/feed');
     } catch (error) {

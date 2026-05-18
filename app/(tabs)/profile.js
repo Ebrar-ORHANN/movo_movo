@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import useProfile from '../../hooks/useProfile';
+import { useLanguage } from '../../context/LanguageContext';
 import { API_BASE } from '../../constants/api';
 import { auth } from '../../src/firebase/config';
 
@@ -33,30 +34,21 @@ function StatItem({ value, label }) {
 }
 
 // ── Post seçenekleri modalı ───────────────────────────────────────────────────
-function PostOptionsModal({ post, visible, onClose, onDeleted, onEdited }) {
+function PostOptionsModal({ post, visible, onClose, onDeleted, onEdited, t }) {
   const [editing, setEditing] = useState(false);
   const [note, setNote]       = useState(post?.user_note || '');
   const [saving, setSaving]   = useState(false);
 
   const handleDelete = () => {
-    Alert.alert('Gönderiyi Sil', 'Bu gönderi kalıcı olarak silinecek. Emin misin?', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Sil', style: 'destructive',
-        onPress: async () => {
-          try {
-            const token = await auth.currentUser?.getIdToken();
-            await fetch(`${API_BASE}/social/posts/${post.id}`, {
-              method: 'DELETE',
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            onClose();
-            onDeleted(post.id);
-          } catch (e) {
-            Alert.alert('Hata', 'Gönderi silinemedi.');
-          }
-        },
-      },
+    Alert.alert(t('deletePost'), t('deletePostConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('delete'), style: 'destructive', onPress: async () => {
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          await fetch(`${API_BASE}/social/posts/${post.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+          onClose(); onDeleted(post.id);
+        } catch { Alert.alert(t('error'), ''); }
+      }},
     ]);
   };
 
@@ -66,18 +58,10 @@ function PostOptionsModal({ post, visible, onClose, onDeleted, onEdited }) {
     try {
       const token  = await auth.currentUser?.getIdToken();
       const params = new URLSearchParams({ user_note: note.trim() });
-      await fetch(`${API_BASE}/social/posts/${post.id}?${params}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      onEdited(post.id, note.trim());
-      setEditing(false);
-      onClose();
-    } catch (e) {
-      Alert.alert('Hata', 'Gönderi güncellenemedi.');
-    } finally {
-      setSaving(false);
-    }
+      await fetch(`${API_BASE}/social/posts/${post.id}?${params}`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } });
+      onEdited(post.id, note.trim()); setEditing(false); onClose();
+    } catch { Alert.alert(t('error'), ''); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -85,58 +69,34 @@ function PostOptionsModal({ post, visible, onClose, onDeleted, onEdited }) {
       <Pressable style={mo.overlay} onPress={onClose} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={mo.sheet}>
         <View style={mo.handle} />
-
         {!editing ? (
           <>
-            <Text style={mo.title}>Gönderi Seçenekleri</Text>
-
-            <TouchableOpacity
-              style={mo.row}
-              onPress={() => { setNote(post?.user_note || ''); setEditing(true); }}
-            >
-              <View style={[mo.iconWrap, { backgroundColor: '#0A2A1A' }]}>
-                <Ionicons name="create-outline" size={20} color="#22C55E" />
-              </View>
-              <Text style={mo.rowText}>Gönderiyi Düzenle</Text>
+            <Text style={mo.title}>{t('postOptions')}</Text>
+            <TouchableOpacity style={mo.row} onPress={() => { setNote(post?.user_note || ''); setEditing(true); }}>
+              <View style={[mo.iconWrap, { backgroundColor: '#0A2A1A' }]}><Ionicons name="create-outline" size={20} color="#22C55E" /></View>
+              <Text style={mo.rowText}>{t('editPost')}</Text>
               <Ionicons name="chevron-forward" size={18} color="#444" />
             </TouchableOpacity>
-
             <TouchableOpacity style={mo.row} onPress={handleDelete}>
-              <View style={[mo.iconWrap, { backgroundColor: '#2A0A0A' }]}>
-                <Ionicons name="trash-outline" size={20} color="#ef4444" />
-              </View>
-              <Text style={[mo.rowText, { color: '#ef4444' }]}>Gönderiyi Sil</Text>
+              <View style={[mo.iconWrap, { backgroundColor: '#2A0A0A' }]}><Ionicons name="trash-outline" size={20} color="#ef4444" /></View>
+              <Text style={[mo.rowText, { color: '#ef4444' }]}>{t('deletePost')}</Text>
               <Ionicons name="chevron-forward" size={18} color="#444" />
             </TouchableOpacity>
-
             <TouchableOpacity style={[mo.row, { borderBottomWidth: 0 }]} onPress={onClose}>
-              <Text style={[mo.rowText, { color: '#888', textAlign: 'center', flex: 1 }]}>İptal</Text>
+              <Text style={[mo.rowText, { color: '#888', textAlign: 'center', flex: 1 }]}>{t('cancel')}</Text>
             </TouchableOpacity>
           </>
         ) : (
           <>
             <View style={mo.editHeader}>
-              <TouchableOpacity onPress={() => setEditing(false)}>
-                <Ionicons name="arrow-back" size={22} color="#fff" />
-              </TouchableOpacity>
-              <Text style={mo.title}>Düzenle</Text>
+              <TouchableOpacity onPress={() => setEditing(false)}><Ionicons name="arrow-back" size={22} color="#fff" /></TouchableOpacity>
+              <Text style={mo.title}>{t('edit')}</Text>
               <TouchableOpacity onPress={handleSaveEdit} disabled={saving || !note.trim()}>
-                {saving
-                  ? <ActivityIndicator color="#22C55E" size="small" />
-                  : <Text style={[mo.saveBtn, !note.trim() && { color: '#333' }]}>Kaydet</Text>
-                }
+                {saving ? <ActivityIndicator color="#22C55E" size="small" /> : <Text style={[mo.saveBtn, !note.trim() && { color: '#333' }]}>{t('save')}</Text>}
               </TouchableOpacity>
             </View>
-            <TextInput
-              style={mo.editInput}
-              value={note}
-              onChangeText={setNote}
-              multiline maxLength={500}
-              placeholder="Gönderi metnini düzenle…"
-              placeholderTextColor="#555"
-              autoFocus
-            />
-            <Text style={mo.charCount}>{500 - note.length} karakter kaldı</Text>
+            <TextInput style={mo.editInput} value={note} onChangeText={setNote} multiline maxLength={500} placeholder="..." placeholderTextColor="#555" autoFocus />
+            <Text style={mo.charCount}>{500 - note.length}</Text>
           </>
         )}
       </KeyboardAvoidingView>
@@ -148,34 +108,17 @@ function PostOptionsModal({ post, visible, onClose, onDeleted, onEdited }) {
 function PostGridCard({ item, onPress, onLongPress }) {
   const hasMedia = item.attachments?.length > 0;
   return (
-    <TouchableOpacity
-      style={pg.cell}
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={400}
-      activeOpacity={0.85}
-    >
+    <TouchableOpacity style={pg.cell} onPress={onPress} onLongPress={onLongPress} delayLongPress={400} activeOpacity={0.85}>
       {hasMedia
         ? <Image source={{ uri: item.attachments[0].storage_path }} style={pg.img} resizeMode="cover" />
-        : (
-          <View style={[pg.img, pg.textCard]}>
-            <Text style={pg.textPreview} numberOfLines={4}>{item.user_note || ''}</Text>
-          </View>
-        )
+        : <View style={[pg.img, pg.textCard]}><Text style={pg.textPreview} numberOfLines={4}>{item.user_note || ''}</Text></View>
       }
-      {item.attachments?.length > 1 && (
-        <View style={pg.multiIcon}>
-          <Ionicons name="copy-outline" size={14} color="#fff" />
-        </View>
-      )}
+      {item.attachments?.length > 1 && <View style={pg.multiIcon}><Ionicons name="copy-outline" size={14} color="#fff" /></View>}
       <View style={pg.overlay}>
         <Ionicons name="heart" size={12} color="#fff" />
         <Text style={pg.overlayText}>{item.like_cnt || 0}</Text>
       </View>
-      {/* Uzun bas ipucu */}
-      <View style={pg.editHint}>
-        <Ionicons name="ellipsis-horizontal" size={16} color="rgba(255,255,255,0.7)" />
-      </View>
+      <View style={pg.editHint}><Ionicons name="ellipsis-horizontal" size={16} color="rgba(255,255,255,0.7)" /></View>
     </TouchableOpacity>
   );
 }
@@ -185,38 +128,20 @@ function SavedPostCard({ item, onPress }) {
   const initials = (item.display_name || item.username || '?').slice(0, 1).toUpperCase();
   return (
     <TouchableOpacity style={sc.card} onPress={onPress} activeOpacity={0.8}>
-      {item.attachments?.length > 0 && (
-        <Image source={{ uri: item.attachments[0].storage_path }} style={sc.thumb} resizeMode="cover" />
-      )}
+      {item.attachments?.length > 0 && <Image source={{ uri: item.attachments[0].storage_path }} style={sc.thumb} resizeMode="cover" />}
       <View style={sc.body}>
         <View style={sc.userRow}>
-          {item.avatar_url
-            ? <Image source={{ uri: item.avatar_url }} style={sc.avatar} />
-            : <View style={[sc.avatar, sc.avatarFallback]}><Text style={sc.avatarText}>{initials}</Text></View>
-          }
+          {item.avatar_url ? <Image source={{ uri: item.avatar_url }} style={sc.avatar} /> : <View style={[sc.avatar, sc.avatarFallback]}><Text style={sc.avatarText}>{initials}</Text></View>}
           <View>
             <Text style={sc.username}>{item.display_name || item.username || 'Kullanıcı'}</Text>
-            <Text style={sc.date}>
-              {item.post_created_at
-                ? new Date(item.post_created_at).toLocaleDateString('tr-TR', { day:'numeric', month:'short' })
-                : ''}
-            </Text>
+            <Text style={sc.date}>{item.post_created_at ? new Date(item.post_created_at).toLocaleDateString('tr-TR', { day:'numeric', month:'short' }) : ''}</Text>
           </View>
         </View>
         {item.user_note ? <Text style={sc.note} numberOfLines={2}>{item.user_note}</Text> : null}
         <View style={sc.stats}>
-          <View style={sc.stat}>
-            <Ionicons name="heart-outline" size={13} color="#888" />
-            <Text style={sc.statText}>{item.like_cnt || 0}</Text>
-          </View>
-          <View style={sc.stat}>
-            <Ionicons name="chatbubble-outline" size={13} color="#888" />
-            <Text style={sc.statText}>{item.comment_cnt || 0}</Text>
-          </View>
-          <View style={[sc.stat, { marginLeft:'auto' }]}>
-            <Ionicons name="bookmark" size={13} color="#22C55E" />
-            <Text style={[sc.statText, { color:'#22C55E' }]}>Kaydedildi</Text>
-          </View>
+          <View style={sc.stat}><Ionicons name="heart-outline" size={13} color="#888" /><Text style={sc.statText}>{item.like_cnt || 0}</Text></View>
+          <View style={sc.stat}><Ionicons name="chatbubble-outline" size={13} color="#888" /><Text style={sc.statText}>{item.comment_cnt || 0}</Text></View>
+          <View style={[sc.stat, { marginLeft:'auto' }]}><Ionicons name="bookmark" size={13} color="#22C55E" /><Text style={[sc.statText, { color:'#22C55E' }]}>Saved</Text></View>
         </View>
       </View>
     </TouchableOpacity>
@@ -227,25 +152,20 @@ function SavedPostCard({ item, onPress }) {
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const {
-    profile, stats, routes, events, saved, posts, adminPerms,
-    loading, activeTab, setActiveTab, totalKm, logout, reload,
-  } = useProfile();
+  const { t }  = useLanguage();
+  const { profile, stats, routes, events, saved, posts, adminPerms, loading, activeTab, setActiveTab, totalKm, logout, reload } = useProfile();
 
   const [selectedPost, setSelectedPost] = useState(null);
   const [localPosts, setLocalPosts]     = useState([]);
 
-  // localPosts'u posts ile senkronize et
   React.useEffect(() => { setLocalPosts(posts || []); }, [posts]);
-
   useFocusEffect(useCallback(() => { reload(); }, [reload]));
 
-  const handleDeleted = (postId) => {
-    setLocalPosts(prev => prev.filter(p => p.id !== postId));
-  };
-
-  const handleEdited = (postId, newNote) => {
-    setLocalPosts(prev => prev.map(p => p.id === postId ? { ...p, user_note: newNote } : p));
+  const handleLogout = () => {
+    Alert.alert(t('logout'), t('logoutConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('logout'), style: 'destructive', onPress: logout },
+    ]);
   };
 
   if (loading) {
@@ -260,14 +180,20 @@ export default function ProfileScreen() {
   const followerCnt = stats?.follower_cnt || 0;
   const routeCnt    = stats?.route_cnt    || routes.length;
 
+  const TABS = [
+    { key: 'gönderiler', label: t('posts') },
+    { key: 'rotalar',    label: t('routes') },
+    { key: 'kaydedilenler', label: t('saved') },
+  ];
+
   return (
     <ScrollView style={[styles.container, { paddingTop:insets.top }]} showsVerticalScrollIndicator={false}>
 
       {/* Başlık */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Profil</Text>
-        <View style={{ flexDirection: 'row', gap: 4 }}>
-          <TouchableOpacity onPress={() => Alert.alert('QR Kod', 'Yakında!')} style={styles.headerBtn}>
+        <Text style={styles.headerTitle}>{t('profileTitle')}</Text>
+        <View style={{ flexDirection:'row', gap:4 }}>
+          <TouchableOpacity onPress={() => Alert.alert('QR', '')} style={styles.headerBtn}>
             <Ionicons name="qr-code-outline" size={22} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => router.push('/settings')} style={styles.headerBtn}>
@@ -279,88 +205,72 @@ export default function ProfileScreen() {
       {/* Profil bilgisi */}
       <View style={styles.profileSection}>
         <View style={styles.avatarWrap}>
-          {profile?.avatar_url
-            ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
-            : <View style={[styles.avatar, styles.avatarInitials]}><Text style={styles.avatarText}>{initials}</Text></View>
-          }
-          {adminPerms?.is_admin && (
-            <View style={styles.adminBadge}><Text style={{ fontSize:10 }}>⚙️</Text></View>
-          )}
+          {profile?.avatar_url ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} /> : <View style={[styles.avatar, styles.avatarInitials]}><Text style={styles.avatarText}>{initials}</Text></View>}
+          {adminPerms?.is_admin && <View style={styles.adminBadge}><Text style={{ fontSize:10 }}>⚙️</Text></View>}
         </View>
         <View style={styles.profileInfo}>
           <Text style={styles.displayName}>{profile?.display_name || 'Kullanıcı'}</Text>
           <Text style={styles.username}>@{profile?.username || 'movo_kullanici'}</Text>
           {profile?.bio
             ? <Text style={styles.bio}>{profile.bio}</Text>
-            : <TouchableOpacity onPress={() => router.push('/profile/edit')}>
-                <Text style={[styles.bio, { color:'#22C55E' }]}>+ Biyografi ekle</Text>
-              </TouchableOpacity>
+            : <TouchableOpacity onPress={() => router.push('/profile/edit')}><Text style={[styles.bio, { color:'#22C55E' }]}>+ Bio</Text></TouchableOpacity>
           }
         </View>
       </View>
 
       {/* İstatistikler */}
       <View style={styles.stats}>
-        <StatItem value={localPosts.length} label="Gönderi" />
+        <StatItem value={localPosts.length} label={t('posts')} />
         <View style={styles.statDivider} />
-        <StatItem value={followerCnt}       label="Takipçi" />
+        <StatItem value={followerCnt}       label={t('followers')} />
         <View style={styles.statDivider} />
-        <StatItem value={routeCnt}          label="Rota"    />
+        <StatItem value={routeCnt}          label={t('routes')} />
         <View style={styles.statDivider} />
-        <StatItem value={totalKm}           label="Km"      />
+        <StatItem value={totalKm}           label={t('km')} />
       </View>
 
       {/* Aksiyon butonları */}
       <View style={styles.actions}>
         <TouchableOpacity style={styles.editBtn} onPress={() => router.push('/profile/edit')}>
           <Ionicons name="create-outline" size={16} color="#fff" />
-          <Text style={styles.editText}>Profili Düzenle</Text>
+          <Text style={styles.editText}>{t('editProfile')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.shareBtn} onPress={() => Alert.alert('Paylaş', 'Yakında!')}>
+        <TouchableOpacity style={styles.shareBtn} onPress={() => Alert.alert(t('share'), '')}>
           <Ionicons name="share-outline" size={18} color="#fff" />
         </TouchableOpacity>
       </View>
 
       {/* Katılım skoru */}
       <View style={styles.scoreCard}>
-        <Text style={styles.scoreLabel}>Katılım Skoru</Text>
+        <Text style={styles.scoreLabel}>Score</Text>
         <Text style={styles.scoreValue}>{profile?.participation_score?.toLocaleString('tr-TR') || '0'}</Text>
         <Text style={styles.scoreSub}>Trust: {profile?.trust_score?.toFixed(1) || '1.0'}</Text>
       </View>
 
       {/* Sekmeler */}
       <View style={styles.tabs}>
-        {['gönderiler', 'rotalar', 'kaydedilenler'].map(tab => (
+        {TABS.map(({ key, label }) => (
           <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && styles.tabActive]}
-            onPress={() => setActiveTab(tab)}
+            key={key}
+            style={[styles.tab, activeTab === key && styles.tabActive]}
+            onPress={() => setActiveTab(key)}
           >
-            <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </Text>
+            <Text style={[styles.tabText, activeTab === key && styles.tabTextActive]}>{label}</Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* ── Gönderiler ──────────────────────────────────────────────────── */}
+      {/* Gönderiler */}
       {activeTab === 'gönderiler' && (
         <>
           {localPosts.length === 0
-            ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>📸</Text>
-                <Text style={styles.emptyText}>Henüz gönderi yok</Text>
-              </View>
-            )
+            ? <View style={styles.emptyState}><Text style={styles.emptyIcon}>📸</Text><Text style={styles.emptyText}>{t('noPosts')}</Text></View>
             : (
               <>
-                <Text style={styles.hintText}>Düzenlemek için uzun bas</Text>
+                <Text style={styles.hintText}>{t('editLongPress')}</Text>
                 <View style={pg.grid}>
                   {localPosts.map(p => (
-                    <PostGridCard
-                      key={p.id}
-                      item={p}
+                    <PostGridCard key={p.id} item={p}
                       onPress={() => router.push(`/post/${p.id}`)}
                       onLongPress={() => setSelectedPost(p)}
                     />
@@ -372,7 +282,7 @@ export default function ProfileScreen() {
         </>
       )}
 
-      {/* ── Rotalar ─────────────────────────────────────────────────────── */}
+      {/* Rotalar */}
       {activeTab === 'rotalar' && (
         <View style={styles.grid}>
           {routes.map(r => (
@@ -386,63 +296,51 @@ export default function ProfileScreen() {
               </View>
             </TouchableOpacity>
           ))}
-          {routes.length === 0 && <Text style={styles.emptyText}>Henüz rota yok</Text>}
+          {routes.length === 0 && <Text style={styles.emptyText}>{t('noRoutes')}</Text>}
         </View>
       )}
 
-      {/* ── Kaydedilenler ───────────────────────────────────────────────── */}
+      {/* Kaydedilenler */}
       {activeTab === 'kaydedilenler' && (
         <View style={styles.listSection}>
           {saved.length === 0
-            ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>🔖</Text>
-                <Text style={styles.emptyText}>Kaydedilen içerik yok</Text>
-              </View>
-            )
+            ? <View style={styles.emptyState}><Text style={styles.emptyIcon}>🔖</Text><Text style={styles.emptyText}>{t('noSaved')}</Text></View>
             : saved.map(s => {
                 if (s.target_type !== 'post') return null;
-                return (
-                  <SavedPostCard
-                    key={`${s.target_type}-${s.target_id}`}
-                    item={s}
-                    onPress={() => router.push(`/post/${s.target_id}`)}
-                  />
-                );
+                return <SavedPostCard key={`${s.target_type}-${s.target_id}`} item={s} onPress={() => router.push(`/post/${s.target_id}`)} />;
               })
           }
         </View>
       )}
 
-      {/* Ayarlar butonu */}
+      {/* Ayarlar */}
       <TouchableOpacity style={styles.settingsBtn} onPress={() => router.push('/settings')}>
         <Ionicons name="settings-outline" size={18} color="#888" />
-        <Text style={styles.settingsBtnText}>Ayarlar</Text>
+        <Text style={styles.settingsBtnText}>{t('settings')}</Text>
         <Ionicons name="chevron-forward" size={16} color="#333" />
       </TouchableOpacity>
 
-      <Text style={styles.version}>MOVO v1.0.0 · Yapay Zeka Destekli Keşif</Text>
+      <Text style={styles.version}>MOVO v1.0.0</Text>
       <View style={{ height:100 }} />
 
-      {/* Post seçenekleri modalı */}
       {selectedPost && (
         <PostOptionsModal
-          post={selectedPost}
-          visible={!!selectedPost}
+          post={selectedPost} visible={!!selectedPost}
           onClose={() => setSelectedPost(null)}
-          onDeleted={handleDeleted}
-          onEdited={handleEdited}
+          onDeleted={(id) => setLocalPosts(prev => prev.filter(p => p.id !== id))}
+          onEdited={(id, newNote) => setLocalPosts(prev => prev.map(p => p.id === id ? { ...p, user_note: newNote } : p))}
+          t={t}
         />
       )}
     </ScrollView>
   );
 }
 
-// ── Stiller ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container:      { flex:1, backgroundColor:'#0D0D0D' },
   header:         { flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:20, paddingBottom:16 },
   headerTitle:    { color:'#fff', fontSize:22, fontWeight:'700' },
+  headerBtn:      { width:36, height:36, alignItems:'center', justifyContent:'center' },
   profileSection: { flexDirection:'row', alignItems:'flex-start', paddingHorizontal:20, marginBottom:16, gap:14 },
   avatarWrap:     { position:'relative' },
   avatar:         { width:70, height:70, borderRadius:35 },
@@ -481,14 +379,9 @@ const styles = StyleSheet.create({
   emptyState:     { alignItems:'center', paddingVertical:40, width:'100%' },
   emptyIcon:      { fontSize:40, marginBottom:10 },
   emptyText:      { color:'#555', fontSize:14, textAlign:'center', padding:20 },
-  section:        { paddingHorizontal:20, marginBottom:20 },
-  sectionTitle:   { color:'#fff', fontSize:16, fontWeight:'600', marginBottom:12 },
-  settingRow:     { flexDirection:'row', alignItems:'center', gap:12, paddingVertical:14, borderBottomWidth:0.5, borderBottomColor:'#111' },
-  settingLabel:   { flex:1, color:'#ccc', fontSize:15 },
-  version:        { textAlign:'center', color:'#333', fontSize:12, marginBottom:8 },
-  headerBtn:      { width:36, height:36, alignItems:'center', justifyContent:'center' },
   settingsBtn:    { flexDirection:'row', alignItems:'center', gap:10, marginHorizontal:20, marginBottom:20, backgroundColor:'#111', borderRadius:14, padding:14, borderWidth:0.5, borderColor:'#1C1C1C' },
   settingsBtnText:{ flex:1, color:'#ccc', fontSize:15 },
+  version:        { textAlign:'center', color:'#333', fontSize:12, marginBottom:8 },
 });
 
 const pg = StyleSheet.create({

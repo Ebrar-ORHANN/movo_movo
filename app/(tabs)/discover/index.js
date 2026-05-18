@@ -198,6 +198,10 @@ export default function DiscoverScreen() {
 
       {/* Sağ butonlar */}
       <View style={[styles.rightBtns, { top: insets.top + 140 }]}>
+        <TouchableOpacity style={styles.fab} onPress={() => router.push('/explorer/chat')}>
+    <Ionicons name="chatbubble-ellipses-outline" size={22} color="#22C55E" />
+  </TouchableOpacity>
+  <Text style={styles.fabLabel}>AI Kaşif</Text>
         <TouchableOpacity
           style={[styles.fab, isExplorerActive && { backgroundColor: '#22C55E' }]}
           onPress={toggleExplorerStatus}

@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import useFeed from '../../hooks/useFeed';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 import { getComments, addComment } from '../../services/feedService';
 import { StoryBar } from '../../components/stories/Stories';
 import { API_BASE } from '../../constants/api';
@@ -37,15 +38,13 @@ function Avatar({ uri, name, size = 36 }) {
     );
 }
 
-// ── Medya ─────────────────────────────────────────────────────────────────────
 function PostMedia({ attachments }) {
   const [activeIdx, setActiveIdx] = useState(0);
   if (!attachments?.length) return null;
   return (
     <View style={{ marginTop: 10 }}>
       <FlatList
-        data={attachments}
-        horizontal pagingEnabled showsHorizontalScrollIndicator={false}
+        data={attachments} horizontal pagingEnabled showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={e => setActiveIdx(Math.round(e.nativeEvent.contentOffset.x / width))}
         keyExtractor={(_, i) => String(i)}
         renderItem={({ item }) => (
@@ -54,40 +53,29 @@ function PostMedia({ attachments }) {
       />
       {attachments.length > 1 && (
         <View style={s.dots}>
-          {attachments.map((_, i) => (
-            <View key={i} style={[s.dot, i === activeIdx && s.dotActive]} />
-          ))}
+          {attachments.map((_, i) => <View key={i} style={[s.dot, i === activeIdx && s.dotActive]} />)}
         </View>
       )}
     </View>
   );
 }
 
-// ── Post seçenekleri modalı ───────────────────────────────────────────────────
-function PostOptionsModal({ post, isOwn, visible, onClose, onDeleted, onEdited }) {
+// ── Post seçenekleri ──────────────────────────────────────────────────────────
+function PostOptionsModal({ post, isOwn, visible, onClose, onDeleted, onEdited, t }) {
   const [editing, setEditing] = useState(false);
   const [note, setNote]       = useState(post?.user_note || '');
   const [saving, setSaving]   = useState(false);
 
   const handleDelete = () => {
-    Alert.alert('Gönderiyi Sil', 'Bu gönderi kalıcı olarak silinecek. Emin misin?', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Sil', style: 'destructive',
-        onPress: async () => {
-          try {
-            const token = await auth.currentUser?.getIdToken();
-            await fetch(`${API_BASE}/social/posts/${post.id}`, {
-              method: 'DELETE',
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            onClose();
-            onDeleted(post.id);
-          } catch {
-            Alert.alert('Hata', 'Gönderi silinemedi.');
-          }
-        },
-      },
+    Alert.alert(t('deletePost'), t('deletePostConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('delete'), style: 'destructive', onPress: async () => {
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          await fetch(`${API_BASE}/social/posts/${post.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+          onClose(); onDeleted(post.id);
+        } catch { Alert.alert(t('error'), ''); }
+      }},
     ]);
   };
 
@@ -97,39 +85,22 @@ function PostOptionsModal({ post, isOwn, visible, onClose, onDeleted, onEdited }
     try {
       const token  = await auth.currentUser?.getIdToken();
       const params = new URLSearchParams({ user_note: note.trim() });
-      await fetch(`${API_BASE}/social/posts/${post.id}?${params}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      onEdited(post.id, note.trim());
-      setEditing(false);
-      onClose();
-    } catch {
-      Alert.alert('Hata', 'Gönderi güncellenemedi.');
-    } finally {
-      setSaving(false);
-    }
+      await fetch(`${API_BASE}/social/posts/${post.id}?${params}`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } });
+      onEdited(post.id, note.trim()); setEditing(false); onClose();
+    } catch { Alert.alert(t('error'), ''); }
+    finally { setSaving(false); }
   };
 
   const handleReport = () => {
-    Alert.alert('Şikayet Et', 'Bu gönderi şikayet edilecek. Emin misin?', [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Şikayet Et', style: 'destructive',
-        onPress: async () => {
-          try {
-            const token = await auth.currentUser?.getIdToken();
-            await fetch(`${API_BASE}/social/reports?target_type=post&target_id=${post.id}&reason=inappropriate`, {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            onClose();
-            Alert.alert('Teşekkürler', 'Şikayetin alındı, inceleyeceğiz.');
-          } catch {
-            Alert.alert('Hata', 'Şikayet gönderilemedi.');
-          }
-        },
-      },
+    Alert.alert(t('report'), '', [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('report'), style: 'destructive', onPress: async () => {
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          await fetch(`${API_BASE}/social/reports?target_type=post&target_id=${post.id}&reason=inappropriate`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+          onClose();
+        } catch {}
+      }},
     ]);
   };
 
@@ -138,66 +109,44 @@ function PostOptionsModal({ post, isOwn, visible, onClose, onDeleted, onEdited }
       <Pressable style={s.modalOverlay} onPress={onClose} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.optionsSheet}>
         <View style={s.sheetHandle} />
-
         {!editing ? (
           <>
-            <Text style={s.sheetTitle}>Seçenekler</Text>
-
+            <Text style={s.sheetTitle}>{t('postOptions')}</Text>
             {isOwn ? (
               <>
                 <TouchableOpacity style={s.optRow} onPress={() => { setNote(post?.user_note || ''); setEditing(true); }}>
-                  <View style={[s.optIcon, { backgroundColor: '#0A2A1A' }]}>
-                    <Ionicons name="create-outline" size={20} color="#22C55E" />
-                  </View>
-                  <Text style={s.optText}>Gönderiyi Düzenle</Text>
+                  <View style={[s.optIcon, { backgroundColor: '#0A2A1A' }]}><Ionicons name="create-outline" size={20} color="#22C55E" /></View>
+                  <Text style={s.optText}>{t('editPost')}</Text>
                   <Ionicons name="chevron-forward" size={18} color="#444" />
                 </TouchableOpacity>
-
                 <TouchableOpacity style={s.optRow} onPress={handleDelete}>
-                  <View style={[s.optIcon, { backgroundColor: '#2A0A0A' }]}>
-                    <Ionicons name="trash-outline" size={20} color="#ef4444" />
-                  </View>
-                  <Text style={[s.optText, { color: '#ef4444' }]}>Gönderiyi Sil</Text>
+                  <View style={[s.optIcon, { backgroundColor: '#2A0A0A' }]}><Ionicons name="trash-outline" size={20} color="#ef4444" /></View>
+                  <Text style={[s.optText, { color: '#ef4444' }]}>{t('deletePost')}</Text>
                   <Ionicons name="chevron-forward" size={18} color="#444" />
                 </TouchableOpacity>
               </>
             ) : (
               <TouchableOpacity style={s.optRow} onPress={handleReport}>
-                <View style={[s.optIcon, { backgroundColor: '#2A1A0A' }]}>
-                  <Ionicons name="flag-outline" size={20} color="#f97316" />
-                </View>
-                <Text style={[s.optText, { color: '#f97316' }]}>Şikayet Et</Text>
+                <View style={[s.optIcon, { backgroundColor: '#2A1A0A' }]}><Ionicons name="flag-outline" size={20} color="#f97316" /></View>
+                <Text style={[s.optText, { color: '#f97316' }]}>{t('report')}</Text>
                 <Ionicons name="chevron-forward" size={18} color="#444" />
               </TouchableOpacity>
             )}
-
             <TouchableOpacity style={[s.optRow, { borderBottomWidth: 0 }]} onPress={onClose}>
-              <Text style={[s.optText, { color: '#888', textAlign: 'center', flex: 1 }]}>İptal</Text>
+              <Text style={[s.optText, { color: '#888', textAlign: 'center', flex: 1 }]}>{t('cancel')}</Text>
             </TouchableOpacity>
           </>
         ) : (
           <>
             <View style={s.editHeader}>
-              <TouchableOpacity onPress={() => setEditing(false)}>
-                <Ionicons name="arrow-back" size={22} color="#fff" />
-              </TouchableOpacity>
-              <Text style={s.sheetTitle}>Düzenle</Text>
+              <TouchableOpacity onPress={() => setEditing(false)}><Ionicons name="arrow-back" size={22} color="#fff" /></TouchableOpacity>
+              <Text style={s.sheetTitle}>{t('edit')}</Text>
               <TouchableOpacity onPress={handleSaveEdit} disabled={saving || !note.trim()}>
-                {saving
-                  ? <ActivityIndicator color="#22C55E" size="small" />
-                  : <Text style={[s.saveBtn, !note.trim() && { color: '#333' }]}>Kaydet</Text>
-                }
+                {saving ? <ActivityIndicator color="#22C55E" size="small" /> : <Text style={[s.saveBtn, !note.trim() && { color: '#333' }]}>{t('save')}</Text>}
               </TouchableOpacity>
             </View>
-            <TextInput
-              style={s.editInput}
-              value={note} onChangeText={setNote}
-              multiline maxLength={500}
-              placeholder="Gönderi metnini düzenle…"
-              placeholderTextColor="#555"
-              autoFocus
-            />
-            <Text style={s.charCount}>{500 - note.length} karakter kaldı</Text>
+            <TextInput style={s.editInput} value={note} onChangeText={setNote} multiline maxLength={500} placeholderTextColor="#555" autoFocus />
+            <Text style={s.charCount}>{500 - note.length}</Text>
           </>
         )}
       </KeyboardAvoidingView>
@@ -206,7 +155,7 @@ function PostOptionsModal({ post, isOwn, visible, onClose, onDeleted, onEdited }
 }
 
 // ── Yorum modalı ──────────────────────────────────────────────────────────────
-function CommentsModal({ postId, visible, onClose, onCommentAdded }) {
+function CommentsModal({ postId, visible, onClose, onCommentAdded, t }) {
   const [comments, setComments] = useState([]);
   const [text, setText]         = useState('');
   const [sending, setSending]   = useState(false);
@@ -216,10 +165,7 @@ function CommentsModal({ postId, visible, onClose, onCommentAdded }) {
   React.useEffect(() => {
     if (visible && postId) {
       setLoadingC(true);
-      getComments('post', postId)
-        .then(d => setComments(d?.comments || d || []))
-        .catch(() => {})
-        .finally(() => setLoadingC(false));
+      getComments('post', postId).then(d => setComments(d?.comments || d || [])).catch(() => {}).finally(() => setLoadingC(false));
     }
   }, [visible, postId]);
 
@@ -228,11 +174,10 @@ function CommentsModal({ postId, visible, onClose, onCommentAdded }) {
     setSending(true);
     try {
       await addComment('post', postId, text.trim(), null);
-      setText('');
-      onCommentAdded?.();
+      setText(''); onCommentAdded?.();
       const d = await getComments('post', postId);
       setComments(d?.comments || d || []);
-    } catch (e) { Alert.alert('Hata', e.message); }
+    } catch (e) { Alert.alert(t('error'), e.message); }
     finally { setSending(false); }
   };
 
@@ -241,16 +186,14 @@ function CommentsModal({ postId, visible, onClose, onCommentAdded }) {
       <Pressable style={s.modalOverlay} onPress={onClose} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.commentSheet}>
         <View style={s.sheetHandle} />
-        <Text style={s.sheetTitle}>Yorumlar</Text>
-
+        <Text style={s.sheetTitle}>{t('comments')}</Text>
         {loadingC
           ? <ActivityIndicator color="#22C55E" style={{ marginTop: 20 }} />
           : (
             <FlatList
-              data={comments}
-              keyExtractor={c => c.id}
+              data={comments} keyExtractor={c => c.id}
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }}
-              ListEmptyComponent={<Text style={s.emptyComments}>Henüz yorum yok. İlk yorumu sen yap!</Text>}
+              ListEmptyComponent={<Text style={s.emptyComments}>{t('noComments')}</Text>}
               renderItem={({ item }) => (
                 <View style={s.commentRow}>
                   <Avatar uri={item.avatar_url} name={item.display_name || item.username} size={30} />
@@ -263,18 +206,11 @@ function CommentsModal({ postId, visible, onClose, onCommentAdded }) {
             />
           )
         }
-
         <View style={s.commentInput}>
           <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={32} />
-          <TextInput
-            style={s.commentBox} placeholder="Yorum yaz…" placeholderTextColor="#555"
-            value={text} onChangeText={setText} multiline maxLength={500}
-          />
+          <TextInput style={s.commentBox} placeholder={t('writeComment')} placeholderTextColor="#555" value={text} onChangeText={setText} multiline maxLength={500} />
           <TouchableOpacity onPress={send} disabled={!text.trim() || sending} style={s.sendBtn}>
-            {sending
-              ? <ActivityIndicator color="#22C55E" size="small" />
-              : <Ionicons name="send" size={20} color={text.trim() ? '#22C55E' : '#333'} />
-            }
+            {sending ? <ActivityIndicator color="#22C55E" size="small" /> : <Ionicons name="send" size={20} color={text.trim() ? '#22C55E' : '#333'} />}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -283,7 +219,7 @@ function CommentsModal({ postId, visible, onClose, onCommentAdded }) {
 }
 
 // ── Post kartı ────────────────────────────────────────────────────────────────
-const PostCard = React.memo(({ item, onLike, onSave, onComment, onOptions, currentUserId }) => {
+const PostCard = React.memo(({ item, onLike, onSave, onComment, onOptions }) => {
   const likeAnim = useRef(new Animated.Value(1)).current;
   const router   = useRouter();
 
@@ -309,11 +245,8 @@ const PostCard = React.memo(({ item, onLike, onSave, onComment, onOptions, curre
           <Ionicons name="ellipsis-horizontal" size={20} color="#555" />
         </TouchableOpacity>
       </View>
-
       {item.user_note ? <Text style={s.cardNote}>{item.user_note}</Text> : null}
-
       <PostMedia attachments={item.attachments} />
-
       <View style={s.cardActions}>
         <View style={s.actionLeft}>
           <TouchableOpacity onPress={handleLike} style={s.actionBtn}>
@@ -322,17 +255,14 @@ const PostCard = React.memo(({ item, onLike, onSave, onComment, onOptions, curre
             </Animated.View>
             {item.like_cnt > 0 && <Text style={[s.actionCnt, item.liked && { color: '#ef4444' }]}>{item.like_cnt}</Text>}
           </TouchableOpacity>
-
           <TouchableOpacity onPress={() => onComment(item)} style={s.actionBtn}>
             <Ionicons name="chatbubble-outline" size={22} color="#888" />
             {item.comment_cnt > 0 && <Text style={s.actionCnt}>{item.comment_cnt}</Text>}
           </TouchableOpacity>
-
           <TouchableOpacity style={s.actionBtn}>
             <Ionicons name="arrow-redo-outline" size={22} color="#888" />
           </TouchableOpacity>
         </View>
-
         <TouchableOpacity onPress={() => onSave(item.id, !!item.saved)} style={s.actionBtn}>
           <Ionicons name={item.saved ? 'bookmark' : 'bookmark-outline'} size={22} color={item.saved ? '#22C55E' : '#888'} />
         </TouchableOpacity>
@@ -346,6 +276,7 @@ export default function FeedScreen() {
   const insets   = useSafeAreaInsets();
   const router   = useRouter();
   const { profile } = useAuth();
+  const { t }    = useLanguage();
   const { posts, loading, refreshing, hasMore, loadFeed, refresh, loadMore, toggleLike, toggleSave, removePost, editPost } = useFeed();
 
   const [commentPost, setCommentPost] = useState(null);
@@ -362,15 +293,8 @@ export default function FeedScreen() {
   };
 
   const renderPost = useCallback(({ item }) => (
-    <PostCard
-      item={item}
-      onLike={toggleLike}
-      onSave={toggleSave}
-      onComment={setCommentPost}
-      onOptions={setOptionsPost}
-      currentUserId={profile?.id}
-    />
-  ), [toggleLike, toggleSave, profile?.id]);
+    <PostCard item={item} onLike={toggleLike} onSave={toggleSave} onComment={setCommentPost} onOptions={setOptionsPost} />
+  ), [toggleLike, toggleSave]);
 
   const renderFooter = () => !hasMore
     ? <View style={{ height: 80 }} />
@@ -379,10 +303,10 @@ export default function FeedScreen() {
   const renderEmpty = () => loading ? null : (
     <View style={s.emptyState}>
       <Text style={s.emptyIcon}>🌍</Text>
-      <Text style={s.emptyTitle}>Henüz gönderi yok</Text>
-      <Text style={s.emptyDesc}>Birilerini takip et veya ilk gönderini paylaş!</Text>
+      <Text style={s.emptyTitle}>{t('feedEmpty')}</Text>
+      <Text style={s.emptyDesc}>{t('feedEmptyDesc')}</Text>
       <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/post/create')}>
-        <Text style={s.emptyBtnText}>Gönderi Paylaş</Text>
+        <Text style={s.emptyBtnText}>{t('sharePost')}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -405,17 +329,12 @@ export default function FeedScreen() {
         ? <View style={s.loadingState}><ActivityIndicator color="#22C55E" size="large" /></View>
         : (
           <FlatList
-            data={posts}
-            keyExtractor={item => item.id}
-            renderItem={renderPost}
+            data={posts} keyExtractor={item => item.id} renderItem={renderPost}
             ListHeaderComponent={<StoryBar />}
-            ListEmptyComponent={renderEmpty}
-            ListFooterComponent={renderFooter}
-            onEndReached={loadMore}
-            onEndReachedThreshold={0.3}
+            ListEmptyComponent={renderEmpty} ListFooterComponent={renderFooter}
+            onEndReached={loadMore} onEndReachedThreshold={0.3}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#22C55E" colors={['#22C55E']} />}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 100 }}
+            showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}
           />
         )
       }
@@ -427,27 +346,21 @@ export default function FeedScreen() {
       </Animated.View>
 
       <CommentsModal
-        postId={commentPost?.id}
-        visible={!!commentPost}
-        onClose={() => setCommentPost(null)}
+        postId={commentPost?.id} visible={!!commentPost} onClose={() => setCommentPost(null)}
         onCommentAdded={() => setCommentPost(prev => prev ? { ...prev, comment_cnt: (prev.comment_cnt || 0) + 1 } : prev)}
+        t={t}
       />
-
       {optionsPost && (
         <PostOptionsModal
-          post={optionsPost}
-          isOwn={optionsPost?.user_id === profile?.id}
-          visible={!!optionsPost}
-          onClose={() => setOptionsPost(null)}
-          onDeleted={(id) => { removePost(id); }}
-          onEdited={(id, newNote) => { editPost(id, newNote); }}
+          post={optionsPost} isOwn={optionsPost?.user_id === profile?.id}
+          visible={!!optionsPost} onClose={() => setOptionsPost(null)}
+          onDeleted={removePost} onEdited={editPost} t={t}
         />
       )}
     </View>
   );
 }
 
-// ── Stiller ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   container:     { flex: 1, backgroundColor: '#0A0A0A' },
   header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10 },
@@ -478,7 +391,6 @@ const s = StyleSheet.create({
   emptyBtn:      { backgroundColor: '#22C55E', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 },
   emptyBtnText:  { color: '#fff', fontWeight: '600', fontSize: 15 },
   modalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
-  // Options sheet
   optionsSheet:  { backgroundColor: '#111', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: Platform.OS === 'ios' ? 34 : 16 },
   sheetHandle:   { width: 36, height: 4, backgroundColor: '#333', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 4 },
   sheetTitle:    { color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center', paddingVertical: 12 },
@@ -489,7 +401,6 @@ const s = StyleSheet.create({
   saveBtn:       { color: '#22C55E', fontSize: 15, fontWeight: '700' },
   editInput:     { color: '#fff', fontSize: 15, lineHeight: 22, padding: 16, minHeight: 120, textAlignVertical: 'top' },
   charCount:     { color: '#444', fontSize: 12, textAlign: 'right', paddingHorizontal: 16, paddingBottom: 10 },
-  // Comment sheet
   commentSheet:  { backgroundColor: '#111', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '75%', minHeight: '50%', paddingBottom: Platform.OS === 'ios' ? 24 : 8 },
   commentRow:    { flexDirection: 'row', gap: 10, marginBottom: 14 },
   commentBubble: { flex: 1, backgroundColor: '#1a1a1a', borderRadius: 14, padding: 10 },
