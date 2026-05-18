@@ -30,11 +30,8 @@ export default function TabsLayout() {
         options={{
           tabBarIcon: ({ focused }) => (
             <View style={ts.iconWrap}>
-              <Ionicons
-                name={focused ? 'home' : 'home-outline'}
-                size={26}
-                color={focused ? '#22C55E' : '#888'}
-              />
+              <Ionicons name={focused ? 'home' : 'home-outline'} size={26}
+                color={focused ? '#22C55E' : '#888'} />
             </View>
           ),
         }}
@@ -58,15 +55,15 @@ export default function TabsLayout() {
         options={{
           tabBarIcon: ({ focused }) => (
             <View style={ts.iconWrap}>
-              <Ionicons
-                name={focused ? 'person' : 'person-outline'}
-                size={26}
-                color={focused ? '#22C55E' : '#888'}
-              />
+              <Ionicons name={focused ? 'person' : 'person-outline'} size={26}
+                color={focused ? '#22C55E' : '#888'} />
             </View>
           ),
         }}
       />
+
+      {/* Gizli ekranlar — tab bar'da gösterilmez */}
+      <Tabs.Screen name="discover/index" options={{ href: null }} />
     </Tabs>
   );
 }
@@ -88,5 +85,6 @@ const ts = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 20,
     shadowColor: '#22C55E', shadowOpacity: 0.5, shadowRadius: 8,
+    elevation: 8,
   },
 });

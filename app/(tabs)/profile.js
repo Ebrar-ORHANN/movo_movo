@@ -14,7 +14,7 @@ import { API_BASE } from '../../constants/api';
 import { auth } from '../../src/firebase/config';
 
 const { width } = Dimensions.get('window');
-const GRID_SIZE = (width - 4) / 3;
+const GRID_SIZE = (width - 52) / 2;
 const IMG_SIZE  = (width - 52) / 2;
 
 const BADGES = [
@@ -193,9 +193,7 @@ export default function ProfileScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t('profileTitle')}</Text>
         <View style={{ flexDirection:'row', gap:4 }}>
-          <TouchableOpacity onPress={() => Alert.alert('QR', '')} style={styles.headerBtn}>
-            <Ionicons name="qr-code-outline" size={22} color="#fff" />
-          </TouchableOpacity>
+          
           <TouchableOpacity onPress={() => router.push('/settings')} style={styles.headerBtn}>
             <Ionicons name="settings-outline" size={22} color="#fff" />
           </TouchableOpacity>
@@ -313,14 +311,7 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      {/* Ayarlar */}
-      <TouchableOpacity style={styles.settingsBtn} onPress={() => router.push('/settings')}>
-        <Ionicons name="settings-outline" size={18} color="#888" />
-        <Text style={styles.settingsBtnText}>{t('settings')}</Text>
-        <Ionicons name="chevron-forward" size={16} color="#333" />
-      </TouchableOpacity>
-
-      <Text style={styles.version}>MOVO v1.0.0</Text>
+      
       <View style={{ height:100 }} />
 
       {selectedPost && (
@@ -385,8 +376,8 @@ const styles = StyleSheet.create({
 });
 
 const pg = StyleSheet.create({
-  grid:        { flexDirection:'row', flexWrap:'wrap', gap:2, marginBottom:20 },
-  cell:        { width:GRID_SIZE, height:GRID_SIZE, position:'relative' },
+  grid:        { flexDirection:'row', flexWrap:'wrap', paddingHorizontal:16, gap:8, marginBottom:20 },
+  cell:        { width:GRID_SIZE, height:GRID_SIZE, position:'relative', borderRadius:20, overflow:'hidden', borderWidth:0.5, borderColor:'#1C1C1C' },
   img:         { width:'100%', height:'100%' },
   textCard:    { backgroundColor:'#1A2E1A', padding:8, justifyContent:'center' },
   textPreview: { color:'#aaa', fontSize:11, lineHeight:16 },

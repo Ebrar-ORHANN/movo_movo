@@ -313,17 +313,23 @@ export default function FeedScreen() {
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
+      {/* ── Header ── */}
       <View style={s.header}>
         <Text style={s.headerLogo}>MOVO</Text>
         <View style={s.headerRight}>
+          <TouchableOpacity style={s.addBtn} onPress={() => router.push('/post/create')}>
+            <Ionicons name="add" size={20} color="#fff" />
+          </TouchableOpacity>
           <TouchableOpacity style={s.headerBtn} onPress={() => router.push('/notifications')}>
-            <Ionicons name="notifications-outline" size={24} color="#fff" />
+            <Ionicons name="notifications-outline" size={23} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity style={s.headerBtn} onPress={() => router.push('/messages')}>
-            <Ionicons name="paper-plane-outline" size={24} color="#fff" />
+            <Ionicons name="paper-plane-outline" size={23} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
+
+     
 
       {loading && posts.length === 0
         ? <View style={s.loadingState}><ActivityIndicator color="#22C55E" size="large" /></View>
@@ -338,12 +344,6 @@ export default function FeedScreen() {
           />
         )
       }
-
-      <Animated.View style={[s.fab, { transform: [{ scale: fabAnim }] }]}>
-        <TouchableOpacity onPress={handleFAB} activeOpacity={0.85}>
-          <Ionicons name="add" size={28} color="#fff" />
-        </TouchableOpacity>
-      </Animated.View>
 
       <CommentsModal
         postId={commentPost?.id} visible={!!commentPost} onClose={() => setCommentPost(null)}
@@ -363,10 +363,18 @@ export default function FeedScreen() {
 
 const s = StyleSheet.create({
   container:     { flex: 1, backgroundColor: '#0A0A0A' },
-  header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10 },
+  header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8 },
   headerLogo:    { color: '#22C55E', fontSize: 22, fontWeight: '800', letterSpacing: 1 },
-  headerRight:   { flexDirection: 'row', gap: 4 },
-  headerBtn:     { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerRight:   { flexDirection: 'row', gap: 4, alignItems: 'center' },
+  headerBtn:     { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+  addBtn:        { width: 32, height: 32, borderRadius: 10, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center', marginRight: 2 },
+
+  // Paylaşım çubuğu
+  shareBar:       { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 14, marginBottom: 10, backgroundColor: '#111', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0.5, borderColor: '#1C1C1C' },
+  shareInputFake: { flex: 1, backgroundColor: '#1A1A1A', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9 },
+  shareInputText: { color: '#444', fontSize: 14 },
+  shareActions:   { flexDirection: 'row', gap: 4 },
+  shareAction:    { width: 34, height: 34, backgroundColor: '#0A2A1A', borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   card:          { backgroundColor: '#111', marginBottom: 8, borderTopWidth: 0.5, borderBottomWidth: 0.5, borderColor: '#1C1C1C' },
   cardHeader:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 14, paddingBottom: 10 },
   cardUser:      { flexDirection: 'row', alignItems: 'center', flex: 1 },
@@ -381,7 +389,7 @@ const s = StyleSheet.create({
   actionLeft:    { flexDirection: 'row', gap: 4 },
   actionBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6 },
   actionCnt:     { color: '#888', fontSize: 13, fontWeight: '500' },
-  fab:           { position: 'absolute', bottom: 90, right: 20, width: 52, height: 52, borderRadius: 26, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center', shadowColor: '#22C55E', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 8 },
+
   loadingState:  { flex: 1, alignItems: 'center', justifyContent: 'center' },
   footer:        { padding: 20, alignItems: 'center' },
   emptyState:    { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 },
