@@ -1,12 +1,9 @@
-// ── hooks/useExplorer.js ─────────────────────────────────────────────────────
-// Kaşif ekranı — harita, POI pinleri, LLM rota
-// DB: pois (ST_DWithin), routes (LLM), active_explorers
-
 import { useState, useCallback } from 'react';
-import { getPOIsInBBox, getNearbyExplorers, searchPOIs } from '../services/explorerService';
+import { getPOIsInBBox, getNearbyExplorers } from '../services/explorerService';
 import { generateLLMRouteSingle } from '../services/routeService';
 import { getNearbyEvents } from '../services/eventService';
 import { getActiveSessions } from '../services/liveService';
+import { api } from '../services/api';
 
 const QUICK_PROMPTS = [
   'Tarihi bir rota öner',
@@ -17,24 +14,33 @@ const QUICK_PROMPTS = [
 ];
 
 export default function useExplorer(cityId) {
-  const [pois, setPOIs]             = useState([]);
-  const [route, setRoute]           = useState(null); // LLM rota sonucu
+  const [pois, setPOIs]                 = useState([]);
+  const [route, setRoute]               = useState(null);
   const [nearbyExplorers, setExplorers] = useState([]);
-  const [events, setEvents]         = useState([]);
-  const [liveSessions, setLive]     = useState([]);
-  const [loading, setLoading]       = useState(false);
-  const [llmLoading, setLlmLoading] = useState(false);
-  const [error, setError]           = useState(null);
+  const [events, setEvents]             = useState([]);
+  const [liveSessions, setLive]         = useState([]);
+  const [loading, setLoading]           = useState(false);
+  const [llmLoading, setLlmLoading]     = useState(false);
+  const [error, setError]               = useState(null);
 
-  // Harita kayınca BBox POI sorgula — pois USING GIST(location)
+  // Harita kayınca BBox POI sorgula — city_id ile filtrele
   const loadPOIsForBBox = useCallback(async (region) => {
     try {
-      const { latitude:lat, longitude:lng, latitudeDelta:dlat, longitudeDelta:dlng } = region;
-      const minLng=lng-dlng/2, maxLng=lng+dlng/2, minLat=lat-dlat/2, maxLat=lat+dlat/2;
-      const data = await getPOIsInBBox(minLng, minLat, maxLng, maxLat);
-      setPOIs(data.slice(0, 80)); // Harita performansı için sınırla
+      const {
+        latitude: lat, longitude: lng,
+        latitudeDelta: dlat, longitudeDelta: dlng,
+      } = region;
+      const minLng = lng - dlng / 2, maxLng = lng + dlng / 2;
+      const minLat = lat - dlat / 2, maxLat = lat + dlat / 2;
+
+      // city_id varsa sorguya ekle
+      const cityParam = cityId ? `&city_id=${cityId}` : '';
+      const data = await api.get(
+        `/pois/bbox?min_lng=${minLng}&min_lat=${minLat}&max_lng=${maxLng}&max_lat=${maxLat}${cityParam}`
+      );
+      setPOIs(Array.isArray(data) ? data.slice(0, 80) : []);
     } catch {}
-  }, []);
+  }, [cityId]);
 
   // Yakındaki etkinlik + gezgin + canlı yayın
   const loadNearbyData = useCallback(async (lat, lng) => {
@@ -50,17 +56,17 @@ export default function useExplorer(cityId) {
     } catch {}
   }, [cityId]);
 
-  // LLM rota oluştur — composite_score motoru (popülerlik+kalite+sponsor+zaman+tercih)
-  const generateRoute = useCallback(async (prompt, userLocation, preferences=[]) => {
+  // LLM rota oluştur
+  const generateRoute = useCallback(async (prompt, userLocation) => {
     if (!prompt?.trim() || !cityId) return;
     try {
       setLlmLoading(true); setError(null); setRoute(null);
       const result = await generateLLMRouteSingle({
         city_id: cityId,
-        preferences: [...preferences, prompt],
+        preferences: [prompt],
         duration_hours: 3,
         transport_mode: 'walking',
-        start_time: new Date().toTimeString().slice(0,5),
+        start_time: new Date().toTimeString().slice(0, 5),
       });
       setRoute(result);
     } catch (e) {

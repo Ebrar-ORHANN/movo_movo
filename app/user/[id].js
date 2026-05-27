@@ -250,14 +250,15 @@ export default function UserProfileScreen() {
   };
 
   // ── Mesaj gönder ──────────────────────────────────────────────────────────
-  const handleMessage = async () => {
-    setMsgLoading(true);
-    try {
-      const room = await getOrCreateRoom(id);
-      router.push(`/messages/${room.id}`);
-    } catch (e) { Alert.alert('Hata', 'Sohbet açılamadı.'); }
-    finally { setMsgLoading(false); }
-  };
+const handleMessage = async () => {
+  setMsgLoading(true);
+  try {
+    const room = await getOrCreateRoom(id);
+    console.log('ROOM RESPONSE:', JSON.stringify(room)); // ← bunu gör
+    router.push(`/messages/${room.id}`);
+  } catch (e) { Alert.alert('Hata', e.message); }
+  finally { setMsgLoading(false); }
+};
 
   // ── Engelle ───────────────────────────────────────────────────────────────
   const handleBlock = () => {

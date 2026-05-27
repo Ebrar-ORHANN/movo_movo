@@ -263,7 +263,7 @@ const rc = StyleSheet.create({
   midPin:       { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#555' },
 
   // Info section
-  info:         { paddingHorizontal: 14, paddingVertical: 12 },
+  info:         { paddingHorizontal: 14, paddingVertical: 10 },
   routeTitle:   { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 6 },
   metaRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   metaChip:     { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#1A1A1A', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4 },

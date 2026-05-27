@@ -46,6 +46,16 @@ export default function DiscoverScreen() {
   const lng = location?.coords?.longitude;
 
   const [cityId, setCityId] = useState(null);
+  // Konum alınınca şehri tespit et
+useEffect(() => {
+  if (lat && lng && !cityId) {
+    api.get(`/geo/detect-city?lat=${lat}&lng=${lng}`)
+      .then(data => {
+        if (data?.id) setCityId(data.id);
+      })
+      .catch(() => {});
+  }
+}, [lat, lng]);
 
   const {
     pois, route, nearbyExplorers, events, liveSessions,
